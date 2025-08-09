@@ -7,39 +7,279 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+interface QueryAnalysis {
+  type: 'sales' | 'loss_reasons' | 'ranking' | 'summary';
+  period?: {
+    month: number;
+    year: number;
+  };
+  filters: {
+    status: 'closed' | 'lost' | 'in_progress' | 'all';
+  };
+}
+
+class DataProcessor {
+  private data: any[] = [];
+  
+  constructor(data: any[]) {
+    this.data = data;
+  }
+
+  filterByPeriod(month?: number, year?: number) {
+    if (!month || !year) return this.data;
+    
+    return this.data.filter(deal => {
+      if (!deal.deal_created_at) return false;
+      const dealDate = new Date(deal.deal_created_at);
+      return dealDate.getMonth() + 1 === month && dealDate.getFullYear() === year;
+    });
+  }
+
+  filterByStatus(data: any[], status: string) {
+    switch (status) {
+      case 'closed':
+        return data.filter(deal => deal.win === true);
+      case 'lost':
+        return data.filter(deal => deal.win === false && deal.hold === false);
+      case 'in_progress':
+        return data.filter(deal => deal.win === false && deal.hold === true);
+      default:
+        return data;
+    }
+  }
+
+  processSales(data: any[]) {
+    const closedDeals = data.filter(deal => deal.win === true);
+    const totalValue = closedDeals.reduce((sum, deal) => {
+      return sum + (parseFloat(deal.deal_amount_total) || 0);
+    }, 0);
+
+    return {
+      type: 'sales',
+      total_value: totalValue,
+      closed_deals: closedDeals.length,
+      total_opportunities: data.length,
+      average_deal_size: closedDeals.length > 0 ? totalValue / closedDeals.length : 0
+    };
+  }
+
+  processLossReasons(data: any[]) {
+    const lostDeals = data.filter(deal => deal.win === false && deal.hold === false);
+    const reasonCounts: { [key: string]: number } = {};
+
+    lostDeals.forEach(deal => {
+      const reason = deal.deal_lost_reason_name || 'Motivo não especificado';
+      if (reason && reason.trim() !== '' && reason !== 'null') {
+        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+      }
+    });
+
+    const topReasons = Object.entries(reasonCounts)
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    return {
+      type: 'loss_reasons',
+      total_lost: lostDeals.length,
+      top_reasons: topReasons
+    };
+  }
+
+  processRanking(data: any[]) {
+    const userStats: { [key: string]: { total: number; closed: number; value: number } } = {};
+
+    data.forEach(deal => {
+      const user = deal.user_name || 'Usuário não especificado';
+      if (!userStats[user]) {
+        userStats[user] = { total: 0, closed: 0, value: 0 };
+      }
+      
+      userStats[user].total++;
+      if (deal.win === true) {
+        userStats[user].closed++;
+        userStats[user].value += parseFloat(deal.deal_amount_total) || 0;
+      }
+    });
+
+    const ranking = Object.entries(userStats)
+      .map(([user, stats]) => ({
+        user,
+        total_deals: stats.total,
+        closed_deals: stats.closed,
+        total_value: stats.value,
+        conversion_rate: stats.total > 0 ? (stats.closed / stats.total * 100) : 0
+      }))
+      .sort((a, b) => b.total_value - a.total_value)
+      .slice(0, 10);
+
+    return {
+      type: 'ranking',
+      users: ranking
+    };
+  }
+
+  processSummary(data: any[]) {
+    const closed = data.filter(d => d.win === true);
+    const lost = data.filter(d => d.win === false && d.hold === false);
+    const inProgress = data.filter(d => d.win === false && d.hold === true);
+    const totalValue = closed.reduce((sum, d) => sum + (parseFloat(d.deal_amount_total) || 0), 0);
+
+    return {
+      type: 'summary',
+      total_deals: data.length,
+      closed_deals: closed.length,
+      lost_deals: lost.length,
+      in_progress_deals: inProgress.length,
+      total_value: totalValue,
+      conversion_rate: data.length > 0 ? (closed.length / data.length * 100) : 0
+    };
+  }
+}
+
+class QueryAnalyzer {
+  static analyze(question: string): QueryAnalysis {
+    const questionLower = question.toLowerCase();
+    
+    // Detect type
+    let type: QueryAnalysis['type'] = 'summary';
+    if (questionLower.includes('valor') || questionLower.includes('vendido') || questionLower.includes('receita')) {
+      type = 'sales';
+    } else if (questionLower.includes('motivo') && questionLower.includes('perda')) {
+      type = 'loss_reasons';
+    } else if (questionLower.includes('ranking') || questionLower.includes('melhor') || questionLower.includes('top')) {
+      type = 'ranking';
+    }
+
+    // Detect period
+    let period: QueryAnalysis['period'] = undefined;
+    const months = {
+      'janeiro': 1, 'fevereiro': 2, 'março': 3, 'abril': 4, 'maio': 5, 'junho': 6,
+      'julho': 7, 'agosto': 8, 'setembro': 9, 'outubro': 10, 'novembro': 11, 'dezembro': 12
+    };
+
+    for (const [monthName, monthNum] of Object.entries(months)) {
+      if (questionLower.includes(monthName)) {
+        period = { month: monthNum, year: 2025 }; // Default to 2025 based on data
+        break;
+      }
+    }
+
+    // Year detection
+    const yearMatch = questionLower.match(/202[0-9]/);
+    if (yearMatch && period) {
+      period.year = parseInt(yearMatch[0]);
+    }
+
+    // Detect status filter
+    let status: QueryAnalysis['filters']['status'] = 'all';
+    if (questionLower.includes('fechado') || questionLower.includes('vendido')) {
+      status = 'closed';
+    } else if (questionLower.includes('perdido')) {
+      status = 'lost';
+    } else if (questionLower.includes('andamento') || questionLower.includes('progresso')) {
+      status = 'in_progress';
+    }
+
+    return { type, period, filters: { status } };
+  }
+}
+
+class ResponseGenerator {
+  static formatCurrency(value: number): string {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(value);
+  }
+
+  static formatPercentage(value: number): string {
+    return `${value.toFixed(1)}%`;
+  }
+
+  static generateResponse(question: string, analysis: QueryAnalysis, result: any): string {
+    const periodText = analysis.period 
+      ? ` em ${this.getMonthName(analysis.period.month)} de ${analysis.period.year}`
+      : '';
+
+    switch (result.type) {
+      case 'sales':
+        if (result.total_value === 0) {
+          return `Não foram encontradas vendas${periodText}. ${result.total_opportunities > 0 ? `Há ${result.total_opportunities} oportunidades no pipeline.` : ''}`;
+        }
+        return `📊 **Vendas${periodText}:**\n\n` +
+               `💰 **Valor total vendido:** ${this.formatCurrency(result.total_value)}\n` +
+               `✅ **Deals fechados:** ${result.closed_deals}\n` +
+               `📈 **Total de oportunidades:** ${result.total_opportunities}\n` +
+               `💵 **Ticket médio:** ${this.formatCurrency(result.average_deal_size)}`;
+
+      case 'loss_reasons':
+        if (result.total_lost === 0) {
+          return `Não foram encontrados deals perdidos${periodText}.`;
+        }
+        const reasonsList = result.top_reasons
+          .map((r: any, i: number) => `${i + 1}. **${r.reason}** (${r.count} deals)`)
+          .join('\n');
+        return `📉 **Motivos de perda${periodText}:**\n\n` +
+               `❌ **Total perdidos:** ${result.total_lost} deals\n\n` +
+               `**Top motivos:**\n${reasonsList}`;
+
+      case 'ranking':
+        const usersList = result.users
+          .map((u: any, i: number) => 
+            `${i + 1}. **${u.user}** - ${this.formatCurrency(u.total_value)} (${u.closed_deals}/${u.total_deals} deals - ${this.formatPercentage(u.conversion_rate)})`
+          )
+          .join('\n');
+        return `🏆 **Ranking de vendedores${periodText}:**\n\n${usersList}`;
+
+      case 'summary':
+        return `📋 **Resumo${periodText}:**\n\n` +
+               `📊 **Total de deals:** ${result.total_deals}\n` +
+               `✅ **Fechados:** ${result.closed_deals}\n` +
+               `❌ **Perdidos:** ${result.lost_deals}\n` +
+               `⏳ **Em andamento:** ${result.in_progress_deals}\n` +
+               `💰 **Valor total:** ${this.formatCurrency(result.total_value)}\n` +
+               `📈 **Taxa de conversão:** ${this.formatPercentage(result.conversion_rate)}`;
+
+      default:
+        return 'Desculpe, não consegui processar essa solicitação.';
+    }
+  }
+
+  static getMonthName(month: number): string {
+    const months = [
+      '', 'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+      'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
+    ];
+    return months[month] || '';
+  }
+}
+
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
     const { question } = await req.json();
-    
+    console.log('🔍 Processing question:', question);
+
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
-    
-    // Get Anthropic API key
-    const anthropicApiKey = Deno.env.get('ANTHROPIC_API_KEY');
-    if (!anthropicApiKey) {
-      throw new Error('ANTHROPIC_API_KEY not configured');
-    }
 
-    console.log('Processing question:', question);
-
-    // Special handler for welcome message with date range
+    // Handle welcome message
     if (question === '__GET_DATE_RANGE__') {
       try {
-        const { data: dateRange } = await supabase
+        const { data: minData } = await supabase
           .from('deals_normalized')
           .select('deal_created_at')
           .not('deal_created_at', 'is', null)
           .order('deal_created_at', { ascending: true })
           .limit(1);
-          
-        const { data: dateRangeMax } = await supabase
+
+        const { data: maxData } = await supabase
           .from('deals_normalized')
           .select('deal_created_at')
           .not('deal_created_at', 'is', null)
@@ -47,226 +287,106 @@ serve(async (req) => {
           .limit(1);
 
         let dateInfo = '';
-        if (dateRange?.[0] && dateRangeMax?.[0]) {
-          const startDate = new Date(dateRange[0].deal_created_at);
-          const endDate = new Date(dateRangeMax[0].deal_created_at);
-          
+        if (minData?.[0] && maxData?.[0]) {
+          const startDate = new Date(minData[0].deal_created_at);
+          const endDate = new Date(maxData[0].deal_created_at);
           const startMonth = startDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
           const endMonth = endDate.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-          
           dateInfo = `\n\n📅 **Dados disponíveis:** ${startMonth} até ${endMonth}`;
         }
 
-        const welcomeMessage = `👋 **Olá! Eu sou a Nalk AI!**\n\nPosso ajudar você com análises dos seus dados de CRM.${dateInfo}\n\nComo posso ajudar você hoje? 🚀`;
-        
-        return new Response(JSON.stringify({ answer: welcomeMessage }), {
+        return new Response(JSON.stringify({
+          answer: `👋 **Olá! Eu sou a Nalk AI!**\n\nPosso ajudar você com análises dos seus dados de CRM.${dateInfo}\n\nComo posso ajudar você hoje? 🚀`
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       } catch (error) {
-        console.error('Welcome message error:', error);
-        return new Response(JSON.stringify({ 
-          answer: `👋 **Olá! Eu sou a Nalk AI!**\\n\\nPosso ajudar você com análises de vendas, motivos de perda e rankings.\\n\\nComo posso ajudar você hoje? 🚀`
+        console.error('❌ Welcome message error:', error);
+        return new Response(JSON.stringify({
+          answer: `👋 **Olá! Eu sou a Nalk AI!**\n\nPosso ajudar você com análises de vendas, motivos de perda e rankings.\n\nComo posso ajudar você hoje? 🚀`
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     }
 
-    // Step 1: Analyze the question using Anthropic
-    const analysisPrompt = `Analise esta pergunta sobre dados de vendas e retorne apenas um JSON:
+    // Step 1: Analyze the question
+    console.log('🧠 Analyzing question...');
+    const analysis = QueryAnalyzer.analyze(question);
+    console.log('📋 Analysis result:', analysis);
 
-PERGUNTA: "${question}"
+    // Step 2: Fetch all data from database
+    console.log('📊 Fetching data from database...');
+    const { data: allData, error: dataError } = await supabase
+      .from('deals_normalized')
+      .select('*');
 
-Você precisa identificar:
-1. Se é sobre vendas (valor vendido), motivos de perda, ou ranking
-2. Se há período específico (mês/ano)
-3. Que tipo de filtro aplicar
-
-RETORNE APENAS JSON:
-{
-  "tipo": "vendas|motivos_perda|ranking|geral",
-  "periodo": {
-    "mes": 6,
-    "ano": 2025
-  },
-  "filtro_status": "fechados|perdidos|todos"
-}
-
-Se não houver período específico, use "periodo": null`;
-
-    const analysisResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': anthropicApiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 500,
-        messages: [
-          { role: 'user', content: analysisPrompt }
-        ]
-      })
-    });
-
-    if (!analysisResponse.ok) {
-      throw new Error(`Anthropic API error: ${analysisResponse.status}`);
+    if (dataError) {
+      console.error('❌ Database error:', dataError);
+      throw new Error(`Database error: ${dataError.message}`);
     }
 
-    const analysisData = await analysisResponse.json();
-    let analysis = null;
-    
-    try {
-      const analysisText = analysisData.content?.[0]?.text?.trim() || '{}';
-      const cleanAnalysis = analysisText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      analysis = JSON.parse(cleanAnalysis);
-      console.log('Analysis:', analysis);
-    } catch (parseError) {
-      console.error('Analysis parsing failed:', parseError);
-      analysis = { tipo: "geral", periodo: null, filtro_status: "todos" };
-    }
-
-    // Step 2: Build SQL query based on analysis
-    let sqlQuery = `
-      SELECT 
-        COUNT(*) as total_deals,
-        COUNT(CASE WHEN win = true THEN 1 END) as deals_fechados,
-        COUNT(CASE WHEN win = false AND hold = false THEN 1 END) as deals_perdidos,
-        COUNT(CASE WHEN win = false AND hold = true THEN 1 END) as deals_em_andamento,
-        COALESCE(SUM(CASE WHEN win = true THEN deal_amount_total ELSE 0 END), 0) as valor_total
-      FROM deals_normalized
-      WHERE 1=1
-    `;
-
-    let periodDescription = '';
-
-    // Add period filter if specified
-    if (analysis.periodo && analysis.periodo.mes && analysis.periodo.ano) {
-      const mes = analysis.periodo.mes;
-      const ano = analysis.periodo.ano;
-      
-      sqlQuery += ` AND deal_created_at >= '${ano}-${mes.toString().padStart(2, '0')}-01'`;
-      sqlQuery += ` AND deal_created_at < '${ano}-${(mes + 1).toString().padStart(2, '0')}-01'`;
-      
-      const monthNames = ['', 'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 
-                         'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
-      periodDescription = `${monthNames[mes]} de ${ano}`;
-    }
-
-    console.log('SQL Query:', sqlQuery);
-
-    // Execute the query
-    const { data: queryResult, error: queryError } = await supabase
-      .rpc('execute_analytics_query', { sql_query: sqlQuery });
-
-    if (queryError) {
-      console.error('Query error:', queryError);
-      throw new Error(`Database query error: ${queryError.message}`);
-    }
-
-    console.log('Query result:', queryResult);
-
-    if (!queryResult || queryResult.length === 0) {
-      return new Response(JSON.stringify({ 
-        answer: `Não encontrei dados para ${periodDescription || 'o período solicitado'}. Verifique se há dados disponíveis para esse período.` 
+    if (!allData || allData.length === 0) {
+      return new Response(JSON.stringify({
+        answer: 'Não há dados disponíveis no sistema.'
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    const result = queryResult[0];
+    console.log(`✅ Fetched ${allData.length} records`);
 
-    // Step 3: Handle specific analysis types
-    let additionalData = null;
+    // Step 3: Process data
+    console.log('⚙️ Processing data...');
+    const processor = new DataProcessor(allData);
 
-    if (analysis.tipo === 'motivos_perda') {
-      // Get loss reasons
-      let lossQuery = `
-        SELECT deal_lost_reason_name, COUNT(*) as quantidade
-        FROM deals_normalized 
-        WHERE win = false AND hold = false 
-        AND deal_lost_reason_name IS NOT NULL 
-        AND deal_lost_reason_name != ''
-      `;
-      
-      if (analysis.periodo && analysis.periodo.mes && analysis.periodo.ano) {
-        const mes = analysis.periodo.mes;
-        const ano = analysis.periodo.ano;
-        lossQuery += ` AND deal_created_at >= '${ano}-${mes.toString().padStart(2, '0')}-01'`;
-        lossQuery += ` AND deal_created_at < '${ano}-${(mes + 1).toString().padStart(2, '0')}-01'`;
-      }
-      
-      lossQuery += ` GROUP BY deal_lost_reason_name ORDER BY quantidade DESC LIMIT 5`;
-      
-      const { data: lossData } = await supabase.rpc('execute_analytics_query', { sql_query: lossQuery });
-      additionalData = { motivos_perda: lossData || [] };
+    // Filter by period
+    let filteredData = processor.filterByPeriod(analysis.period?.month, analysis.period?.year);
+    console.log(`📅 After period filter: ${filteredData.length} records`);
+
+    // Filter by status
+    filteredData = processor.filterByStatus(filteredData, analysis.filters.status);
+    console.log(`🔍 After status filter: ${filteredData.length} records`);
+
+    // Process based on type
+    let result;
+    switch (analysis.type) {
+      case 'sales':
+        result = processor.processSales(filteredData);
+        break;
+      case 'loss_reasons':
+        result = processor.processLossReasons(filteredData);
+        break;
+      case 'ranking':
+        result = processor.processRanking(filteredData);
+        break;
+      default:
+        result = processor.processSummary(filteredData);
     }
 
-    // Step 4: Generate response using Anthropic
-    const responseData = {
-      pergunta: question,
-      periodo: periodDescription,
-      dados: result,
-      adicional: additionalData
-    };
+    console.log('📈 Processing result:', result);
 
-    const responsePrompt = `Baseado nestes dados, forneça uma resposta clara em português brasileiro:
+    // Step 4: Generate response
+    const response = ResponseGenerator.generateResponse(question, analysis, result);
+    console.log('💬 Generated response');
 
-DADOS: ${JSON.stringify(responseData, null, 2)}
+    // Log interaction
+    await supabase.from('nalk_ai_logs').insert([{
+      question,
+      answer: response,
+      query_result: result,
+      sql_query: JSON.stringify(analysis),
+      created_at: new Date().toISOString()
+    }]);
 
-INSTRUÇÕES:
-1. Responda diretamente à pergunta
-2. Use formatação markdown (**negrito**) para destacar números importantes
-3. Formate valores monetários como R$ X.XXX,XX
-4. Seja claro e objetivo
-5. Se não houver dados, explique e sugira alternativas
-
-Resposta:`;
-
-    const finalResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': anthropicApiKey,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 1500,
-        messages: [
-          { role: 'user', content: responsePrompt }
-        ]
-      })
-    });
-
-    if (!finalResponse.ok) {
-      throw new Error(`Final response API error: ${finalResponse.status}`);
-    }
-
-    const finalData = await finalResponse.json();
-    const finalAnswer = finalData.content?.[0]?.text || 'Desculpe, não consegui processar sua pergunta.';
-
-    // Log the interaction
-    await supabase.from('nalk_ai_logs').insert([
-      { 
-        question, 
-        prompt: responsePrompt, 
-        answer: finalAnswer, 
-        sql_query: sqlQuery,
-        query_result: responseData,
-        created_at: new Date().toISOString() 
-      }
-    ]);
-
-    return new Response(JSON.stringify({ answer: finalAnswer }), {
+    return new Response(JSON.stringify({ answer: response }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error('Error in nalk-ai function:', error);
-    return new Response(JSON.stringify({ 
-      answer: 'Ops! Ocorreu um erro ao processar sua pergunta. Tente novamente.' 
+    console.error('💥 Error:', error);
+    return new Response(JSON.stringify({
+      answer: 'Ops! Ocorreu um erro ao processar sua pergunta. Tente novamente.'
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

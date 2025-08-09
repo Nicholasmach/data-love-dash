@@ -145,6 +145,14 @@ RETORNE EXATAMENTE ESTE JSON (sem texto adicional):
       })
     });
 
+    console.log('Anthropic API response status:', analysisResponse.status);
+    
+    if (!analysisResponse.ok) {
+      const errorText = await analysisResponse.text();
+      console.error('Anthropic API error:', errorText);
+      throw new Error(`Anthropic API error: ${analysisResponse.status} - ${errorText}`);
+    }
+
     const analysisData = await analysisResponse.json();
     console.log('Analysis response:', analysisData);
 
@@ -394,7 +402,16 @@ Resposta:`;
       })
     });
 
+    console.log('Final response status:', finalResponse.status);
+    
+    if (!finalResponse.ok) {
+      const errorText = await finalResponse.text();
+      console.error('Final response API error:', errorText);
+      throw new Error(`Final response API error: ${finalResponse.status} - ${errorText}`);
+    }
+
     const finalData = await finalResponse.json();
+    console.log('Final response data:', finalData);
     const finalAnswer = finalData.content?.[0]?.text || 'Desculpe, não consegui processar sua pergunta.';
 
     // Log the interaction

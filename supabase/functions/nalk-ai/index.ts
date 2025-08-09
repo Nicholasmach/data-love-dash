@@ -7,11 +7,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface DealsMetadata {
-  name: string;
-  description: string;
-}
-
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -43,12 +38,14 @@ serve(async (req) => {
         const { data: dateRange } = await supabase
           .from('deals_normalized')
           .select('deal_created_at')
+          .not('deal_created_at', 'is', null)
           .order('deal_created_at', { ascending: true })
           .limit(1);
           
         const { data: dateRangeMax } = await supabase
           .from('deals_normalized')
           .select('deal_created_at')
+          .not('deal_created_at', 'is', null)
           .order('deal_created_at', { ascending: false })
           .limit(1);
 
@@ -78,57 +75,98 @@ serve(async (req) => {
       }
     }
 
-    // Load metadata for AI understanding
-    const metadata: DealsMetadata[] = [
-      { name: "deal_id", description: "ID único do deal" },
-      { name: "deal_name", description: "Nome do deal" },
-      { name: "deal_amount_total", description: "Valor total do deal" },
-      { name: "deal_created_at", description: "Data de criação do deal" },
-      { name: "deal_lost_reason_name", description: "Motivo da perda (se perdido)" },
-      { name: "deal_stage_name", description: "Estágio atual do deal" },
-      { name: "deal_close_date", description: "Data de fechamento do deal" },
-      { name: "win", description: "true se deal foi fechado/vendido, false caso contrário" },
-      { name: "hold", description: "true se deal está em espera, false caso contrário" },
-      { name: "contact_name", description: "Nome do contato" },
-      { name: "contact_email", description: "Email do contato" },
-      { name: "organization_name", description: "Nome da organização" }
-    ];
-
-    // Get sample data for context
-    const { data: sampleData } = await supabase
+    // Get comprehensive data from the database for context
+    console.log('Fetching data from deals_normalized table...');
+    
+    const { data: allData, error: dataError } = await supabase
       .from('deals_normalized')
       .select('*')
-      .limit(5);
+      .limit(5000);
 
-    console.log(`Sample data retrieved: ${sampleData?.length || 0} records`);
+    if (dataError) {
+      console.error('Error fetching data:', dataError);
+      throw new Error(`Database error: ${dataError.message}`);
+    }
 
-    // Step 1: Question analysis using Anthropic Claude
-    const analysisPrompt = `Analise esta pergunta sobre dados de vendas e retorne APENAS um JSON válido:
+    console.log(`Successfully fetched ${allData?.length || 0} records from database`);
 
-PERGUNTA: "${question}"
+    if (!allData || allData.length === 0) {
+      return new Response(JSON.stringify({ 
+        answer: 'Não encontrei dados disponíveis no sistema. Verifique se os dados foram sincronizados corretamente.' 
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-CAMPOS DA TABELA:
-${metadata.map(m => `${m.name}: ${m.description}`).join('\n')}
+    // Get sample of data for AI context
+    const sampleData = allData.slice(0, 3);
+    
+    // Get available columns dynamically
+    const availableColumns = Object.keys(allData[0] || {});
+    
+    // Get data summary for AI context
+    const totalDeals = allData.length;
+    const closedDeals = allData.filter(deal => deal.win === true);
+    const lostDeals = allData.filter(deal => deal.win === false && deal.hold === false);
+    const inProgressDeals = allData.filter(deal => deal.win === false && deal.hold === true);
+    
+    const totalRevenue = closedDeals.reduce((sum, deal) => sum + (parseFloat(deal.deal_amount_total) || 0), 0);
+    
+    // Get unique values for key fields
+    const uniqueStages = [...new Set(allData.map(d => d.deal_stage_name).filter(Boolean))];
+    const uniqueSources = [...new Set(allData.map(d => d.deal_source_name).filter(Boolean))];
+    const uniqueUsers = [...new Set(allData.map(d => d.user_name).filter(Boolean))];
+    
+    // Get date range
+    const dates = allData.map(d => d.deal_created_at).filter(Boolean).sort();
+    const minDate = dates[0] ? new Date(dates[0]).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) : 'N/A';
+    const maxDate = dates[dates.length - 1] ? new Date(dates[dates.length - 1]).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) : 'N/A';
 
-DADOS EXEMPLO:
-${JSON.stringify(sampleData?.[0] || {}, null, 2)}
+    // Step 1: Intelligent question analysis
+    const analysisPrompt = `Você é um especialista em análise de dados de CRM. Analise esta pergunta e retorne APENAS um JSON válido.
 
-REGRAS:
+PERGUNTA DO USUÁRIO: "${question}"
+
+CONTEXTO DOS DADOS:
+- Total de deals: ${totalDeals}
+- Deals fechados: ${closedDeals.length}
+- Deals perdidos: ${lostDeals.length}  
+- Deals em progresso: ${inProgressDeals.length}
+- Receita total: R$ ${totalRevenue.toLocaleString('pt-BR')}
+- Período dos dados: ${minDate} até ${maxDate}
+
+CAMPOS DISPONÍVEIS: ${availableColumns.join(', ')}
+
+EXEMPLOS DE DADOS:
+${JSON.stringify(sampleData, null, 2)}
+
+REGRAS IMPORTANTES:
 - win=true: deal fechado/vendido
 - win=false AND hold=false: deal perdido  
-- win=false AND hold=true: deal em espera
+- win=false AND hold=true: deal em progresso/em espera
+- deal_amount_total: valor do deal
+- deal_created_at: data de criação
+- deal_lost_reason_name: motivo da perda
 
-RETORNE EXATAMENTE ESTE JSON (sem texto adicional):
+INSTRUÇÕES:
+1. Identifique o que o usuário quer saber
+2. Determine quais campos são necessários
+3. Identifique filtros temporais (mês/ano) se houver
+4. Determine o tipo de análise necessária
+
+RETORNE APENAS ESTE JSON:
 {
-  "entendimento": "o que o usuário quer saber",
+  "tipo_analise": "vendas|motivos_perda|ranking|resumo_geral",
   "campos_necessarios": ["campo1", "campo2"],
-  "filtros_identificados": {
-    "temporal": "2025-08 ou null",
-    "status": "fechados/perdidos/todos"
+  "filtros": {
+    "temporal": "mês YYYY ou null",
+    "status": "fechados|perdidos|em_progresso|todos"
   },
-  "precisa_esclarecimento": false
+  "entendimento": "resumo do que o usuário quer"
 }`;
 
+    console.log('Sending analysis request to Anthropic...');
+    
     const analysisResponse = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -145,244 +183,190 @@ RETORNE EXATAMENTE ESTE JSON (sem texto adicional):
       })
     });
 
-    console.log('Anthropic API response status:', analysisResponse.status);
-    
     if (!analysisResponse.ok) {
       const errorText = await analysisResponse.text();
       console.error('Anthropic API error:', errorText);
-      throw new Error(`Anthropic API error: ${analysisResponse.status} - ${errorText}`);
+      throw new Error(`Anthropic API error: ${analysisResponse.status}`);
     }
 
     const analysisData = await analysisResponse.json();
-    console.log('Analysis response:', analysisData);
+    console.log('Analysis response received');
 
     let analysis = null;
     try {
       const analysisText = analysisData.content?.[0]?.text?.trim() || '{}';
       const cleanAnalysis = analysisText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       analysis = JSON.parse(cleanAnalysis);
-      console.log('Analysis completed:', JSON.stringify(analysis));
+      console.log('Analysis parsed successfully:', analysis);
     } catch (parseError) {
       console.error('Analysis parsing failed:', parseError);
       analysis = { 
-        entendimento: "Análise geral dos dados", 
+        tipo_analise: "resumo_geral",
         campos_necessarios: ["*"], 
-        filtros_identificados: {},
-        precisa_esclarecimento: false
+        filtros: { temporal: null, status: "todos" },
+        entendimento: "Análise geral dos dados"
       };
     }
 
-    // Step 2: Check if clarification is needed
-    if (analysis.precisa_esclarecimento) {
-      const clarificationAnswer = `${analysis.pergunta_esclarecimento}\n\nPor favor, me ajude com mais detalhes para que eu possa fornecer uma resposta mais precisa.`;
+    // Step 2: Filter and process data based on analysis
+    let filteredData = [...allData];
+    let appliedFilters = [];
+
+    // Apply temporal filters dynamically
+    if (analysis.filtros?.temporal) {
+      const temporal = analysis.filtros.temporal.toLowerCase();
+      console.log('Applying temporal filter:', temporal);
       
-      await supabase.from('nalk_ai_logs').insert([
-        { 
-          question, 
-          prompt: analysisPrompt, 
-          answer: clarificationAnswer, 
-          sql_query: 'Clarification needed',
-          query_result: analysis,
-          created_at: new Date().toISOString() 
+      // Extract month and year from the temporal filter
+      const monthNames = {
+        'janeiro': 1, 'fevereiro': 2, 'março': 3, 'abril': 4, 'maio': 5, 'junho': 6,
+        'julho': 7, 'agosto': 8, 'setembro': 9, 'outubro': 10, 'novembro': 11, 'dezembro': 12
+      };
+      
+      let targetMonth = null;
+      let targetYear = null;
+      
+      // Try to extract month and year
+      for (const [monthName, monthNum] of Object.entries(monthNames)) {
+        if (temporal.includes(monthName)) {
+          targetMonth = monthNum;
+          break;
         }
-      ]);
+      }
       
-      return new Response(JSON.stringify({ answer: clarificationAnswer }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      const yearMatch = temporal.match(/\d{4}/);
+      if (yearMatch) {
+        targetYear = parseInt(yearMatch[0]);
+      }
+      
+      if (targetMonth && targetYear) {
+        filteredData = filteredData.filter(deal => {
+          if (!deal.deal_created_at) return false;
+          const dealDate = new Date(deal.deal_created_at);
+          return dealDate.getMonth() + 1 === targetMonth && dealDate.getFullYear() === targetYear;
+        });
+        appliedFilters.push(`${Object.keys(monthNames)[targetMonth - 1]} de ${targetYear}`);
+      }
     }
 
-    // Step 3: Execute data retrieval
-    let queryResult = null;
-    let queryError = null;
+    // Apply status filters
+    if (analysis.filtros?.status && analysis.filtros.status !== 'todos') {
+      const status = analysis.filtros.status;
+      if (status === 'fechados') {
+        filteredData = filteredData.filter(deal => deal.win === true);
+        appliedFilters.push('deals fechados');
+      } else if (status === 'perdidos') {
+        filteredData = filteredData.filter(deal => deal.win === false && deal.hold === false);
+        appliedFilters.push('deals perdidos');
+      } else if (status === 'em_progresso') {
+        filteredData = filteredData.filter(deal => deal.win === false && deal.hold === true);
+        appliedFilters.push('deals em progresso');
+      }
+    }
 
-    try {
-      // Get data based on AI analysis
-      let query = supabase.from('deals_normalized');
-      
-      // Select fields based on AI analysis
-      const fields = analysis.campos_necessarios?.includes('*') 
-        ? '*'
-        : analysis.campos_necessarios?.join(', ') || '*';
-      
-      query = query.select(fields);
+    console.log(`Filtered data: ${filteredData.length} records`);
 
-      // Apply filters based on AI analysis
-      const filters = analysis.filtros_identificados || {};
-      
-      // Temporal filters
-      let appliedPeriodFilter = null;
-      if (filters.temporal) {
-        const temporal = filters.temporal.toLowerCase();
+    // Step 3: Process data based on analysis type
+    let processedResult = null;
+
+    switch (analysis.tipo_analise) {
+      case 'vendas':
+        const closedInPeriod = filteredData.filter(deal => deal.win === true);
+        const totalValue = closedInPeriod.reduce((sum, deal) => sum + (parseFloat(deal.deal_amount_total) || 0), 0);
         
-        // Map common period references to actual date ranges
-        const monthMappings: { [key: string]: { start: string, end: string, name: string } } = {
-          'janeiro': { start: '2025-01-01', end: '2025-02-01', name: 'janeiro 2025' },
-          '2025-01': { start: '2025-01-01', end: '2025-02-01', name: 'janeiro 2025' },
-          'fevereiro': { start: '2025-02-01', end: '2025-03-01', name: 'fevereiro 2025' },
-          '2025-02': { start: '2025-02-01', end: '2025-03-01', name: 'fevereiro 2025' },
-          'março': { start: '2025-03-01', end: '2025-04-01', name: 'março 2025' },
-          '2025-03': { start: '2025-03-01', end: '2025-04-01', name: 'março 2025' },
-          'abril': { start: '2025-04-01', end: '2025-05-01', name: 'abril 2025' },
-          '2025-04': { start: '2025-04-01', end: '2025-05-01', name: 'abril 2025' },
-          'maio': { start: '2025-05-01', end: '2025-06-01', name: 'maio 2025' },
-          '2025-05': { start: '2025-05-01', end: '2025-06-01', name: 'maio 2025' },
-          'junho': { start: '2025-06-01', end: '2025-07-01', name: 'junho 2025' },
-          '2025-06': { start: '2025-06-01', end: '2025-07-01', name: 'junho 2025' },
-          'julho': { start: '2025-07-01', end: '2025-08-01', name: 'julho 2025' },
-          '2025-07': { start: '2025-07-01', end: '2025-08-01', name: 'julho 2025' },
-          'agosto': { start: '2025-08-01', end: '2025-09-01', name: 'agosto 2025' },
-          '2025-08': { start: '2025-08-01', end: '2025-09-01', name: 'agosto 2025' }
+        processedResult = {
+          tipo: 'vendas',
+          valor_total: totalValue,
+          quantidade_deals: closedInPeriod.length,
+          total_oportunidades: filteredData.length,
+          filtros_aplicados: appliedFilters
         };
+        break;
 
-        for (const [key, mapping] of Object.entries(monthMappings)) {
-          if (temporal.includes(key)) {
-            query = query.gte('deal_created_at', mapping.start).lt('deal_created_at', mapping.end);
-            appliedPeriodFilter = mapping.name;
-            break;
+      case 'motivos_perda':
+        const lostInPeriod = filteredData.filter(deal => deal.win === false && deal.hold === false);
+        const reasonCounts = {};
+        
+        lostInPeriod.forEach(deal => {
+          const reason = deal.deal_lost_reason_name || 'Motivo não especificado';
+          if (reason && reason.trim() !== '' && reason !== 'null') {
+            reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
           }
-        }
-      }
-
-      // Status filters
-      if (filters.status === 'fechados') {
-        query = query.eq('win', true);
-      } else if (filters.status === 'perdidos') {
-        query = query.eq('win', false).eq('hold', false);
-      } else if (filters.status === 'em_andamento') {
-        query = query.eq('win', false).eq('hold', false);
-      }
-
-      // Limit for performance
-      query = query.limit(5000);
-
-      const { data, error } = await query;
-      
-      if (error) {
-        queryError = error;
-        console.error('Query error:', error);
-      } else {
-        console.log(`Query executed successfully. Retrieved ${data.length} records for period: ${appliedPeriodFilter || 'all data'}`);
+        });
         
-        // Check if no data found for specific period
-        if (data.length === 0 && appliedPeriodFilter) {
-          console.log(`No data found for period: ${appliedPeriodFilter}`);
-          
-          // Get available periods to suggest
-          const { data: availablePeriods } = await supabase
-            .from('deals_normalized')
-            .select('deal_created_at')
-            .eq('win', true)
-            .order('deal_created_at', { ascending: true });
-          
-          let availableMonths: string[] = [];
-          if (availablePeriods && availablePeriods.length > 0) {
-            const monthsSet = new Set<string>();
-            availablePeriods.forEach(deal => {
-              const date = new Date(deal.deal_created_at);
-              const monthYear = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-              monthsSet.add(monthYear);
-            });
-            availableMonths = Array.from(monthsSet);
+        const topReasons = Object.entries(reasonCounts)
+          .map(([motivo, quantidade]) => ({ motivo, quantidade }))
+          .sort((a, b) => b.quantidade - a.quantidade)
+          .slice(0, 10);
+        
+        processedResult = {
+          tipo: 'motivos_perda',
+          motivos: topReasons,
+          total_perdidos: lostInPeriod.length,
+          filtros_aplicados: appliedFilters
+        };
+        break;
+
+      case 'ranking':
+        // Ranking can be by user, source, stage, etc.
+        const userStats = {};
+        filteredData.forEach(deal => {
+          const user = deal.user_name || 'Usuário não especificado';
+          if (!userStats[user]) {
+            userStats[user] = { total: 0, fechados: 0, valor: 0 };
           }
-          
-          const noDataResponse = `Não encontrei dados de vendas para **${appliedPeriodFilter}**. 📊\\n\\nIsso pode acontecer porque:\\n• Não houve vendas fechadas nesse período\\n• Os dados ainda não foram sincronizados\\n\\n**Períodos com dados disponíveis:**\\n${availableMonths.map(month => `• ${month}`).join('\\n')}\\n\\nGostaria de consultar algum desses períodos?`;
-          
-          await supabase.from('nalk_ai_logs').insert([
-            { 
-              question, 
-              prompt: analysisPrompt, 
-              answer: noDataResponse, 
-              sql_query: `No data found for period: ${appliedPeriodFilter}`,
-              query_result: { no_data: true, period: appliedPeriodFilter, available_periods: availableMonths },
-              created_at: new Date().toISOString() 
-            }
-          ]);
-          
-          return new Response(JSON.stringify({ answer: noDataResponse }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+          userStats[user].total++;
+          if (deal.win === true) {
+            userStats[user].fechados++;
+            userStats[user].valor += parseFloat(deal.deal_amount_total) || 0;
+          }
+        });
         
-        // Process data based on question type
-        const questionLower = question.toLowerCase();
+        const userRanking = Object.entries(userStats)
+          .map(([usuario, stats]) => ({ usuario, ...stats }))
+          .sort((a, b) => b.valor - a.valor)
+          .slice(0, 10);
         
-        if (questionLower.includes('motivo') && questionLower.includes('perda')) {
-          console.log('Processing loss reasons');
-          
-          const lostDeals = data.filter(item => !item.win && !item.hold);
-          const reasonCounts: { [key: string]: number } = {};
-          
-          lostDeals.forEach(deal => {
-            const reason = deal.deal_lost_reason_name || 'Motivo não especificado';
-            if (reason && reason.trim() !== '' && reason !== 'null') {
-              reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
-            }
-          });
-          
-          const sortedReasons = Object.entries(reasonCounts)
-            .map(([motivo, quantidade]) => ({ motivo, quantidade }))
-            .sort((a, b) => b.quantidade - a.quantidade)
-            .slice(0, 5);
-          
-          queryResult = {
-            tipo: "motivos_perda",
-            resultados: sortedReasons
-          };
-          
-          console.log(`Processed ${lostDeals.length} lost deals, found ${Object.keys(reasonCounts).length} unique reasons`);
-          
-        } else if (questionLower.includes('valor') && (questionLower.includes('vendido') || questionLower.includes('fechado') || questionLower.includes('vendas'))) {
-          console.log('Processing sales values');
-          
-          const closedDeals = data.filter(item => item.win === true);
-          const totalValue = closedDeals.reduce((sum, item) => {
-            const value = parseFloat(item.deal_amount_total) || 0;
-            return sum + value;
-          }, 0);
-          
-          queryResult = {
-            tipo: "valor_vendido",
-            resultados: [{
-              valor_total: totalValue,
-              deals_fechados: closedDeals.length,
-              total_oportunidades: data.length
-            }]
-          };
-          
-          console.log('Processed sales data:', JSON.stringify(queryResult));
-          
-        } else {
-          // General data summary
-          queryResult = {
-            tipo: "resumo_geral",
-            resultados: [{
-              total_deals: data.length,
-              deals_fechados: data.filter(item => item.win === true).length,
-              deals_perdidos: data.filter(item => !item.win && !item.hold).length,
-              deals_em_andamento: data.filter(item => !item.win && item.hold).length
-            }]
-          };
-        }
-      }
-    } catch (error) {
-      console.error('Data retrieval error:', error);
-      queryError = error;
+        processedResult = {
+          tipo: 'ranking_usuarios',
+          ranking: userRanking,
+          filtros_aplicados: appliedFilters
+        };
+        break;
+
+      default:
+        // Resumo geral
+        const summary = {
+          total_deals: filteredData.length,
+          deals_fechados: filteredData.filter(d => d.win === true).length,
+          deals_perdidos: filteredData.filter(d => d.win === false && d.hold === false).length,
+          deals_em_progresso: filteredData.filter(d => d.win === false && d.hold === true).length,
+          valor_total: filteredData.filter(d => d.win === true).reduce((sum, d) => sum + (parseFloat(d.deal_amount_total) || 0), 0)
+        };
+        
+        processedResult = {
+          tipo: 'resumo_geral',
+          ...summary,
+          filtros_aplicados: appliedFilters
+        };
+        break;
     }
 
-    // Step 4: Generate final answer using Anthropic
-    const responsePrompt = `Baseado nos dados analisados, forneça uma resposta clara e útil em português brasileiro:
+    console.log('Processed result:', processedResult);
+
+    // Step 4: Generate natural language response
+    const responsePrompt = `Baseado nos dados processados, forneça uma resposta clara e útil em português brasileiro:
 
 PERGUNTA ORIGINAL: "${question}"
-ANÁLISE: ${JSON.stringify(analysis)}
-DADOS PROCESSADOS: ${JSON.stringify(queryResult)}
+DADOS PROCESSADOS: ${JSON.stringify(processedResult, null, 2)}
 
-Forneça uma resposta profissional e útil que:
-1. Responda diretamente à pergunta
-2. Inclua números e insights relevantes
-3. Use formatação em markdown para destacar informações importantes
-4. Seja clara e fácil de entender
-5. Termine com uma pergunta ou sugestão de próximos passos
+INSTRUÇÕES:
+1. Responda de forma direta e clara à pergunta
+2. Use formatação markdown para destacar números importantes
+3. Inclua insights relevantes se houver
+4. Seja profissional mas acessível
+5. Se não houver dados para o período, explique e sugira períodos alternativos
+6. Use números formatados em português (ex: R$ 1.234,56)
 
 Resposta:`;
 
@@ -402,16 +386,13 @@ Resposta:`;
       })
     });
 
-    console.log('Final response status:', finalResponse.status);
-    
     if (!finalResponse.ok) {
       const errorText = await finalResponse.text();
       console.error('Final response API error:', errorText);
-      throw new Error(`Final response API error: ${finalResponse.status} - ${errorText}`);
+      throw new Error(`Final response API error: ${finalResponse.status}`);
     }
 
     const finalData = await finalResponse.json();
-    console.log('Final response data:', finalData);
     const finalAnswer = finalData.content?.[0]?.text || 'Desculpe, não consegui processar sua pergunta.';
 
     // Log the interaction
@@ -420,8 +401,8 @@ Resposta:`;
         question, 
         prompt: responsePrompt, 
         answer: finalAnswer, 
-        sql_query: JSON.stringify(queryResult),
-        query_result: queryResult,
+        sql_query: JSON.stringify(analysis),
+        query_result: processedResult,
         created_at: new Date().toISOString() 
       }
     ]);

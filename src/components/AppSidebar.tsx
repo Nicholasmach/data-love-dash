@@ -23,7 +23,6 @@ import { cn } from "@/lib/utils"
 
 const navItems = [
   { title: "Analytics", url: "/analytics", icon: TrendingUp },
-  { title: "Template", url: "/template", icon: Layout },
   { title: "Nalk AI", url: "/nalk-ai", icon: Bot },
   { title: "Integrações", url: "/integrations", icon: Link },
   { title: "Admin", url: "/admin", icon: Users },

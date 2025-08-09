@@ -7,8 +7,7 @@ import { AuthProvider } from "@/components/AuthProvider";
 import NalkAI from "@/pages/NalkAI";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Index from "./pages/Index";
-import Analytics from "./pages/Analytics";
-import Template from "./pages/Template";
+import Analytics from "./pages/Template";
 import Integrations from "./pages/Integrations";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
@@ -25,7 +24,6 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
-            <Route path="/template" element={<ProtectedRoute><Template /></ProtectedRoute>} />
             <Route path="/integrations" element={<ProtectedRoute><Integrations /></ProtectedRoute>} />
             <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

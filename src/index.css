@@ -1,0 +1,237 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* EXACT Color Palette as specified */
+    --background: 0 0% 16%;        /* #2a3032 - Main background */
+    --foreground: 0 0% 100%;       /* #ffffff - Pure white text */
+    --card: 0 0% 16%;              /* #2a3032 - Card background */
+    --card-foreground: 0 0% 100%;  /* #ffffff - Card text */
+    --popover: 0 0% 12%;           /* #1f2325 - Popover background */
+    --popover-foreground: 0 0% 100%;
+    --primary: 75 100% 60%;        /* #dff53a - Neon green EXACT */
+    --primary-foreground: 0 0% 0%; /* Black text on neon green */
+    --secondary: 0 0% 12%;         /* #1f2325 - Secondary elements */
+    --secondary-foreground: 210 2% 69%; /* #afb0b4 - Secondary text */
+    --muted: 0 0% 12%;             /* #1f2325 - Muted backgrounds */
+    --muted-foreground: 210 2% 69%; /* #afb0b4 - Secondary text EXACT */
+    --accent: 75 100% 60%;         /* #dff53a - Same as primary */
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 23%;            /* #3a3f41 - Subtle borders */
+    --input: 0 0% 12%;             /* #1f2325 - Input backgrounds */
+    --ring: 75 100% 60%;           /* #dff53a - Focus rings */
+    --chart-1: 75 100% 60%;        /* #dff53a - Primary chart color */
+    --chart-2: 75 84% 64%;         /* #e4ff66 - Hover state */
+    --chart-3: 67 84% 56%;         /* #cbe93a - Secondary chart */
+    --chart-4: 59 84% 56%;         /* #b0d53a - Tertiary chart */
+    --chart-5: 51 84% 56%;         /* #9bc13a - Additional chart */
+    --radius: 0.5rem;              /* 8px border radius EXACT */
+    --success: 75 100% 60%;
+    --success-foreground: 0 0% 0%;
+    --warning: 48 96% 53%;
+    --warning-foreground: 0 0% 0%;
+    --info: 217 91% 60%;
+    --info-foreground: 0 0% 100%;
+    --sidebar-background: 0 0% 16%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 75 100% 60%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 12%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 23%;
+    --sidebar-ring: 75 100% 60%;
+    
+    /* Custom gradients and effects - IMPROVED */
+    --gradient-primary: linear-gradient(135deg, hsl(75 100% 60%) 0%, hsl(75 84% 64%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(0 0% 16%) 0%, hsl(0 0% 12%) 100%);
+    --gradient-subtle: linear-gradient(180deg, hsl(0 0% 16%) 0%, hsl(0 0% 12%) 100%);
+    --shadow-neon: 0 0 8px hsl(75 100% 60% / 0.6);
+    --glow-neon: 0 0 20px hsl(75 100% 60% / 0.4);
+    --shadow-card: 0 4px 20px hsl(0 0% 0% / 0.3);
+    --shadow-elegant: 0 10px 30px -10px hsl(75 100% 60% / 0.3);
+  }
+
+  .dark {
+    /* Already using dark theme by default */
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Gantari', system-ui, sans-serif;
+    background: hsl(var(--background));
+  }
+}
+
+@layer components {
+  /* IMPROVED Web3/Crypto Design Components */
+  .crypto-gradient {
+    background: var(--gradient-primary);
+  }
+  
+  .crypto-card {
+    @apply bg-card border border-border/50 rounded-lg;
+    background: var(--gradient-card);
+    box-shadow: var(--shadow-card);
+    transition: all 0.3s ease-out;
+    padding: 20px;
+  }
+  
+  .crypto-card:hover {
+    box-shadow: var(--shadow-neon);
+    transform: translateY(-2px);
+  }
+  
+  .neon-button {
+    @apply bg-primary text-primary-foreground rounded-lg px-6 py-3 font-bold transition-all duration-300;
+    box-shadow: 0 0 0 hsl(75 100% 60% / 0);
+  }
+  
+  .neon-button:hover {
+    box-shadow: var(--shadow-neon);
+    transform: translateY(-1px);
+  }
+  
+  /* EXACT Typography as specified */
+  .brand-title {
+    font-family: 'Mynerve', cursive;
+    font-weight: 500;
+    @apply text-primary;
+  }
+  
+  .metric-title {
+    font-family: 'Gantari', system-ui, sans-serif;
+    font-weight: 700;
+    @apply text-foreground;
+  }
+  
+  .metric-value {
+    font-family: 'Gantari', system-ui, sans-serif;
+    font-weight: 700;
+    @apply text-foreground;
+  }
+  
+  .helper-text {
+    font-family: 'Georgia', serif;
+    font-weight: 400;
+    @apply text-muted-foreground;
+  }
+  
+  /* COMPACT Layout utilities */
+  .compact-grid {
+    @apply grid gap-5;
+  }
+  
+  .compact-card {
+    @apply crypto-card;
+    padding: 16px;
+    min-height: auto;
+  }
+  
+  /* PERFECT alignment utilities */
+  .perfect-align {
+    @apply flex items-center justify-between;
+  }
+  
+  /* Improved auth components */
+  .auth-card {
+    @apply crypto-card;
+    padding: 32px;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+  
+  /* Active navigation state */
+  .nav-active {
+    @apply bg-secondary border-l-2 border-primary text-primary;
+    background: hsl(var(--secondary));
+  }
+
+  /* IMPROVED chart styles with EXACT specifications */
+  .recharts-cartesian-grid-horizontal line,
+  .recharts-cartesian-grid-vertical line {
+    stroke: hsl(0 0% 23%); /* #3a3f41 - EXACT */
+    stroke-opacity: 0.4;
+  }
+
+  .recharts-text {
+    fill: hsl(210 2% 69%); /* #afb0b4 - EXACT */
+    font-family: 'Gantari', system-ui, sans-serif;
+    font-size: 12px;
+  }
+
+  .recharts-tooltip-wrapper {
+    background: hsl(0 0% 12%) !important; /* #1f2325 - EXACT */
+    border: 1px solid hsl(0 0% 23%) !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-card) !important;
+  }
+  
+  .recharts-tooltip-wrapper .recharts-default-tooltip {
+    background: hsl(0 0% 12%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    box-shadow: var(--shadow-card) !important;
+  }
+  
+  .recharts-tooltip-label {
+    color: hsl(75 100% 60%) !important; /* #dff53a - EXACT */
+    font-family: 'Gantari', system-ui, sans-serif !important;
+    font-weight: 600 !important;
+  }
+  
+  .recharts-tooltip-item {
+    color: hsl(75 100% 60%) !important; /* #dff53a - EXACT */
+    font-family: 'Gantari', system-ui, sans-serif !important;
+  }
+
+  /* Neon glow effects */
+  .glow-neon {
+    box-shadow: var(--glow-neon);
+  }
+
+  .border-neon {
+    border: 1px solid hsl(75 100% 60% / 0.5);
+    box-shadow: 0 0 10px hsl(75 100% 60% / 0.2);
+  }
+  
+  /* Interactive states */
+  .interactive-hover {
+    @apply transition-all duration-300 ease-out;
+  }
+  
+  .interactive-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-neon);
+  }
+  
+  /* Input styles */
+  .crypto-input {
+    @apply bg-input border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted-foreground;
+    @apply focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all duration-200;
+  }
+  
+  /* Table styles */
+  .crypto-table {
+    @apply bg-card border border-border rounded-lg overflow-hidden;
+  }
+  
+  .crypto-table th {
+    @apply bg-secondary text-muted-foreground font-medium p-4;
+  }
+  
+  .crypto-table td {
+    @apply p-4 border-t border-border;
+  }
+  
+  .crypto-table tr:nth-child(even) {
+    @apply bg-muted/30;
+  }
+}

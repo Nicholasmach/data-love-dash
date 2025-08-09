@@ -1,0 +1,132 @@
+[
+  {
+    "name": "id",
+    "type": "uuid",
+    "description": "Identificador único do negócio."
+  },
+  {
+    "name": "rd_deal_id",
+    "type": "text",
+    "description": "ID do deal no RD Station."
+  },
+  {
+    "name": "deal_name",
+    "type": "text",
+    "description": "Nome/título do negócio."
+  },
+  {
+    "name": "deal_amount_total",
+    "type": "numeric",
+    "description": "Valor total do negócio em reais."
+  },
+  {
+    "name": "deal_amount_unique",
+    "type": "numeric",
+    "description": "Valor único do negócio (sem recorrência)."
+  },
+  {
+    "name": "deal_created_at",
+    "type": "timestamp",
+    "description": "Data de criação do negócio (ISO 8601)."
+  },
+  {
+    "name": "deal_updated_at",
+    "type": "timestamp",
+    "description": "Data da última atualização do negócio."
+  },
+  {
+    "name": "deal_closed_at",
+    "type": "timestamp",
+    "description": "Data de fechamento do negócio."
+  },
+  {
+    "name": "deal_stage_id",
+    "type": "text",
+    "description": "ID do estágio do funil de vendas."
+  },
+  {
+    "name": "deal_stage_name",
+    "type": "text",
+    "description": "Nome do estágio atual do funil de vendas."
+  },
+  {
+    "name": "deal_source_name",
+    "type": "text",
+    "description": "Origem do lead/negócio."
+  },
+  {
+    "name": "deal_lost_reason_name",
+    "type": "text",
+    "description": "Motivo específico da perda do negócio (campo essencial para análise de perdas)."
+  },
+  {
+    "name": "contact_name",
+    "type": "text",
+    "description": "Nome do contato/cliente."
+  },
+  {
+    "name": "contact_email",
+    "type": "text",
+    "description": "Email do contato/cliente."
+  },
+  {
+    "name": "campaign_name",
+    "type": "text",
+    "description": "Nome da campanha associada ao negócio."
+  },
+  {
+    "name": "organization_name",
+    "type": "text",
+    "description": "Nome da organização/pipeline."
+  },
+  {
+    "name": "user_id",
+    "type": "text",
+    "description": "ID do vendedor/responsável."
+  },
+  {
+    "name": "user_name",
+    "type": "text",
+    "description": "Nome do vendedor/responsável pelo negócio."
+  },
+  {
+    "name": "interactions",
+    "type": "numeric",
+    "description": "Número de interações com o cliente."
+  },
+  {
+    "name": "win",
+    "type": "boolean",
+    "description": "Indicador se o negócio foi ganho/fechado com sucesso."
+  },
+  {
+    "name": "hold",
+    "type": "boolean",
+    "description": "Indicador se o negócio está em espera/pausado."
+  },
+  {
+    "name": "last_activity_at",
+    "type": "timestamp",
+    "description": "Data da última atividade no negócio."
+  },
+  {
+    "name": "last_activity_content",
+    "type": "text",
+    "description": "Conteúdo da última atividade realizada."
+  },
+  {
+    "name": "sync_job_id",
+    "type": "text",
+    "description": "ID do job de sincronização."
+  },
+  {
+    "name": "created_at",
+    "type": "timestamp",
+    "description": "Data de criação do registro no sistema."
+  },
+  {
+    "name": "updated_at",
+    "type": "timestamp",
+    "description": "Data da última atualização do registro."
+  }
+]

@@ -1,4 +1,4 @@
-import { Database, Settings, Users, TrendingUp, LogOut, Bot, Link } from "lucide-react"
+import { Database, Settings, Users, TrendingUp, LogOut, Bot, Link, Layout } from "lucide-react"
 import { NavLink, useLocation } from "react-router-dom"
 import { supabase } from '@/integrations/supabase/client'
 
@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils"
 
 const navItems = [
   { title: "Analytics", url: "/analytics", icon: TrendingUp },
+  { title: "Template", url: "/template", icon: Layout },
   { title: "Nalk AI", url: "/nalk-ai", icon: Bot },
   { title: "Integrações", url: "/integrations", icon: Link },
   { title: "Admin", url: "/admin", icon: Users },

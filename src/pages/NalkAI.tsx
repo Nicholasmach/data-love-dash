@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { scrollToBottom } from '@/utils/scroll'
+import { supabase } from '@/integrations/supabase/client'
 
 interface Message {
   id: number
@@ -59,13 +60,12 @@ const NalkAI: React.FC = () => {
       setLoading(true)
       
       try {
-        // Buscar range de datas disponíveis
-        const resp = await fetch('/api/nalk-ai', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: '__GET_DATE_RANGE__' })
+        // Buscar range de datas disponíveis usando Supabase Edge Function
+        const { data, error } = await supabase.functions.invoke('nalk-ai', {
+          body: { question: '__GET_DATE_RANGE__' }
         })
-        const data = await resp.json()
+        
+        if (error) throw error
         
         const welcomeMessage: Message = {
           id: 0,
@@ -105,17 +105,17 @@ Como posso ajudar você hoje? 🚀`
     setLoading(true)
 
     try {
-      const resp = await fetch('/api/nalk-ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: input })
+      // Usar Supabase Edge Function ao invés do servidor Express
+      const { data, error } = await supabase.functions.invoke('nalk-ai', {
+        body: { question: input }
       })
-      const json = await resp.json()
+      
+      if (error) throw error
       
       const aiMsg: Message = { 
         id: Date.now() + 1, 
         role: 'assistant', 
-        text: json.answer || 'Desculpe, não consegui processar sua pergunta.' 
+        text: data.answer || 'Desculpe, não consegui processar sua pergunta.' 
       }
       setMessages(prev => [...prev, aiMsg])
     } catch (error) {

@@ -58,6 +58,9 @@ enable_confirmations = false
 enabled = true
 port = 54328
 
+[functions.nalk-ai]
+verify_jwt = false
+
 [functions.rd-station-sync]
 verify_jwt = false
 

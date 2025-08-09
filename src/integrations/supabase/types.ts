@@ -253,6 +253,36 @@ export type Database = {
           },
         ]
       }
+      nalk_ai_logs: {
+        Row: {
+          answer: string | null
+          created_at: string | null
+          id: number
+          prompt: string | null
+          query_result: Json | null
+          question: string
+          sql_query: string | null
+        }
+        Insert: {
+          answer?: string | null
+          created_at?: string | null
+          id?: number
+          prompt?: string | null
+          query_result?: Json | null
+          question: string
+          sql_query?: string | null
+        }
+        Update: {
+          answer?: string | null
+          created_at?: string | null
+          id?: number
+          prompt?: string | null
+          query_result?: Json | null
+          question?: string
+          sql_query?: string | null
+        }
+        Relationships: []
+      }
       rd_deals: {
         Row: {
           created_at: string

@@ -77,12 +77,25 @@ class NalkAIProcessor:
     def _detect_period(self, question: str) -> Optional[Dict[str, int]]:
         """Detecta período temporal na pergunta"""
         
-        # Detectar mês
+        # Verificar se a pergunta pede análise de toda a base
+        if any(phrase in question for phrase in [
+            'toda a base', 'todos os meses', 'todo o período', 
+            'completo', 'geral', 'total geral', 'tudo'
+        ]):
+            return None  # Sem filtro de período
+        
+        # Detectar mês - mas verificar contexto
         month = None
         for month_name, month_num in self.months_pt.items():
-            if month_name in question:
-                month = month_num
-                break
+            # Usar regex para garantir que é uma referência ao mês
+            # e não parte de outra palavra
+            pattern = r'\b' + month_name + r'\b'
+            if re.search(pattern, question):
+                # Verificar se não está sendo negado
+                negation_pattern = r'(não|nao).*' + month_name
+                if not re.search(negation_pattern, question):
+                    month = month_num
+                    break
         
         # Detectar ano
         year_match = re.search(r'202[0-9]', question)
@@ -146,13 +159,19 @@ class NalkAIProcessor:
                 df = self._filter_by_period(df, analysis['period'])
                 logger.info(f"Após filtro temporal: {len(df)} registros")
             
-            # Aplicar filtros de status
-            if analysis['status_filter'] != 'all':
-                df = self._filter_by_status(df, analysis['status_filter'])
-                logger.info(f"Após filtro de status: {len(df)} registros")
-            
-            # Processar baseado no tipo de análise
-            result = self._process_by_type(df, analysis['type'])
+            # Para análise de vendas, NÃO aplicar filtro de status antes
+            # Queremos ver todas as oportunidades do período
+            if analysis['type'] == 'sales':
+                # Passar DataFrame completo do período para análise de vendas
+                result = self._process_sales(df)
+            else:
+                # Para outros tipos, aplicar filtro de status normalmente
+                if analysis['status_filter'] != 'all':
+                    df = self._filter_by_status(df, analysis['status_filter'])
+                    logger.info(f"Após filtro de status: {len(df)} registros")
+                
+                # Processar baseado no tipo de análise
+                result = self._process_by_type(df, analysis['type'])
             
             return result
             
@@ -206,11 +225,24 @@ class NalkAIProcessor:
     def _process_sales(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Processa análise de vendas"""
         
-        closed_deals = df[df['win'] == True]
+        # IMPORTANTE: Não filtrar por status aqui, já foi filtrado antes
+        # df já contém apenas os registros filtrados por período e status
+        
+        # Se o filtro de status foi aplicado para 'closed', df já contém apenas deals fechados
+        # Mas vamos também contar o total de oportunidades do período original
+        
+        # Para vendas, queremos sempre mostrar o contexto completo
+        # Vamos recalcular com base no DataFrame original se necessário
+        
+        closed_deals = df[df['win'] == True] if 'win' in df.columns else df
         
         total_value = closed_deals['deal_amount_total'].fillna(0).sum()
         closed_count = len(closed_deals)
+        
+        # Para total de oportunidades, considerar todos os deals do período
+        # não apenas os fechados
         total_opportunities = len(df)
+        
         avg_deal_size = total_value / closed_count if closed_count > 0 else 0
         
         return {

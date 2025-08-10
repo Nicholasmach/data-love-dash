@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Direto - Nalk AI Python Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+        }
+        .error {
+            border-left-color: #f44336;
+            background: #ffebee;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Teste Direto - Nalk AI Python Service</h1>
+        
+        <div class="status" id="status">
+            Verificando conexão com o serviço Python...
+        </div>
+        
+        <h2>Testes Disponíveis:</h2>
+        
+        <button onclick="testHealth()">1. Health Check</button>
+        <button onclick="testMockData()">2. Teste com Dados Mock</button>
+        <button onclick="testJuneQuestion()">3. Pergunta: Junho 2025</button>
+        <button onclick="testLossReasons()">4. Motivos de Perda</button>
+        <button onclick="testRanking()">5. Ranking Vendedores</button>
+        
+        <div id="result" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        const PYTHON_SERVICE_URL = 'http://localhost:5000';
+        
+        // Verificar status inicial
+        window.onload = async () => {
+            try {
+                const response = await fetch(`${PYTHON_SERVICE_URL}/health`);
+                const data = await response.json();
+                document.getElementById('status').className = 'status success';
+                document.getElementById('status').textContent = '✅ Serviço Python conectado e funcionando!';
+            } catch (error) {
+                document.getElementById('status').className = 'status error';
+                document.getElementById('status').textContent = '❌ Erro: Serviço Python não está respondendo em http://localhost:5000';
+            }
+        };
+        
+        function showResult(content, isError = false) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.className = isError ? 'result error' : 'result';
+            resultDiv.textContent = typeof content === 'object' ? JSON.stringify(content, null, 2) : content;
+        }
+        
+        async function testHealth() {
+            showResult('Testando health check...', false);
+            try {
+                const response = await fetch(`${PYTHON_SERVICE_URL}/health`);
+                const data = await response.json();
+                showResult(`✅ Health Check OK!\n\n${JSON.stringify(data, null, 2)}`);
+            } catch (error) {
+                showResult(`❌ Erro: ${error.message}`, true);
+            }
+        }
+        
+        async function testMockData() {
+            showResult('Testando com dados mock...', false);
+            try {
+                const response = await fetch(`${PYTHON_SERVICE_URL}/test`);
+                const data = await response.json();
+                
+                if (data.result && data.result.answer) {
+                    showResult(`✅ Teste com Mock OK!\n\nPergunta: ${data.test_question}\nDados: ${data.test_data_count} registros\n\nResposta:\n${data.result.answer}`);
+                } else {
+                    showResult(data);
+                }
+            } catch (error) {
+                showResult(`❌ Erro: ${error.message}`, true);
+            }
+        }
+        
+        async function testJuneQuestion() {
+            showResult('Processando pergunta sobre junho/2025...', false);
+            
+            // Dados reais de junho (sem vendas fechadas)
+            const testData = [
+                {
+                    deal_created_at: '2025-06-08T00:59:39.363+00:00',
+                    deal_amount_total: 0,
+                    win: false,
+                    hold: true,
+                    user_name: 'Samuel Araújo',
+                    deal_lost_reason_name: null,
+                    deal_stage_name: 'Em andamento',
+                    rd_deal_id: 'june_001'
+                },
+                {
+                    deal_created_at: '2025-06-05T20:17:31.996+00:00',
+                    deal_amount_total: 0,
+                    win: false,
+                    hold: true,
+                    user_name: 'Cicinha Caldas',
+                    deal_lost_reason_name: null,
+                    deal_stage_name: 'Em andamento',
+                    rd_deal_id: 'june_002'
+                },
+                {
+                    deal_created_at: '2025-06-05T20:15:23.661+00:00',
+                    deal_amount_total: 0,
+                    win: false,
+                    hold: false,
+                    user_name: 'Adriana Pedreti',
+                    deal_lost_reason_name: 'Preço muito alto',
+                    deal_stage_name: 'Perdido',
+                    rd_deal_id: 'june_003'
+                }
+            ];
+            
+            try {
+                const response = await fetch(`${PYTHON_SERVICE_URL}/process`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question: 'Qual o valor vendido em junho de 2025?',
+                        data: testData
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.answer) {
+                    showResult(`✅ Processamento OK!\n\nPergunta: Qual o valor vendido em junho de 2025?\n\nResposta:\n${data.answer}\n\nAnálise:\n${JSON.stringify(data.analysis, null, 2)}`);
+                } else {
+                    showResult(data);
+                }
+            } catch (error) {
+                showResult(`❌ Erro: ${error.message}`, true);
+            }
+        }
+        
+        async function testLossReasons() {
+            showResult('Processando motivos de perda...', false);
+            
+            const testData = [
+                {
+                    deal_created_at: '2025-07-01T10:00:00Z',
+                    deal_amount_total: 1000,
+                    win: false,
+                    hold: false,
+                    user_name: 'João',
+                    deal_lost_reason_name: 'Preço muito alto',
+                    rd_deal_id: 'loss_001'
+                },
+                {
+                    deal_created_at: '2025-07-02T10:00:00Z',
+                    deal_amount_total: 2000,
+                    win: false,
+                    hold: false,
+                    user_name: 'Maria',
+                    deal_lost_reason_name: 'Preço muito alto',
+                    rd_deal_id: 'loss_002'
+                },
+                {
+                    deal_created_at: '2025-07-03T10:00:00Z',
+                    deal_amount_total: 1500,
+                    win: false,
+                    hold: false,
+                    user_name: 'Pedro',
+                    deal_lost_reason_name: 'Escolheu concorrente',
+                    rd_deal_id: 'loss_003'
+                }
+            ];
+            
+            try {
+                const response = await fetch(`${PYTHON_SERVICE_URL}/process`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question: 'Quais os motivos de perda mais comuns?',
+                        data: testData
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.answer) {
+                    showResult(`✅ Processamento OK!\n\nPergunta: Quais os motivos de perda mais comuns?\n\nResposta:\n${data.answer}`);
+                } else {
+                    showResult(data);
+                }
+            } catch (error) {
+                showResult(`❌ Erro: ${error.message}`, true);
+            }
+        }
+        
+        async function testRanking() {
+            showResult('Processando ranking de vendedores...', false);
+            
+            const testData = [
+                {
+                    deal_created_at: '2025-07-01T10:00:00Z',
+                    deal_amount_total: 5000,
+                    win: true,
+                    hold: false,
+                    user_name: 'João Silva',
+                    rd_deal_id: 'rank_001'
+                },
+                {
+                    deal_created_at: '2025-07-02T10:00:00Z',
+                    deal_amount_total: 8000,
+                    win: true,
+                    hold: false,
+                    user_name: 'Maria Santos',
+                    rd_deal_id: 'rank_002'
+                },
+                {
+                    deal_created_at: '2025-07-03T10:00:00Z',
+                    deal_amount_total: 3000,
+                    win: true,
+                    hold: false,
+                    user_name: 'João Silva',
+                    rd_deal_id: 'rank_003'
+                },
+                {
+                    deal_created_at: '2025-07-04T10:00:00Z',
+                    deal_amount_total: 2000,
+                    win: false,
+                    hold: false,
+                    user_name: 'Maria Santos',
+                    deal_lost_reason_name: 'Preço',
+                    rd_deal_id: 'rank_004'
+                }
+            ];
+            
+            try {
+                const response = await fetch(`${PYTHON_SERVICE_URL}/process`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question: 'Ranking dos melhores vendedores',
+                        data: testData
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.answer) {
+                    showResult(`✅ Processamento OK!\n\nPergunta: Ranking dos melhores vendedores\n\nResposta:\n${data.answer}`);
+                } else {
+                    showResult(data);
+                }
+            } catch (error) {
+                showResult(`❌ Erro: ${error.message}`, true);
+            }
+        }
+    </script>
+</body>
+</html>

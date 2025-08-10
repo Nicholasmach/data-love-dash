@@ -171,14 +171,35 @@ async function processFallback(question: string, data: any[]): Promise<string> {
         filteredDeals = closedDeals.filter(deal => {
           if (!deal.deal_created_at) return false;
           const dealDate = new Date(deal.deal_created_at);
-          return dealDate.getMonth() === 5; // June is month 5 (0-indexed)
+          // Check both month (5 = June, 0-indexed) AND year 2025
+          return dealDate.getMonth() === 5 && dealDate.getFullYear() === 2025;
         });
         
         const monthValue = filteredDeals.reduce((sum, deal) => {
           return sum + (parseFloat(deal.deal_amount_total) || 0);
         }, 0);
         
-        return `📊 **Vendas em junho de 2025:**\n\n💰 **Valor total vendido:** R$ ${monthValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n✅ **Deals fechados:** ${filteredDeals.length}`;
+        // Debug log
+        console.log(`📊 Filtered ${filteredDeals.length} deals for June 2025 with total value: ${monthValue}`);
+        
+        if (filteredDeals.length === 0) {
+          // Check if there are any deals in June 2025 (not just closed ones)
+          const allJuneDeals = data.filter(deal => {
+            if (!deal.deal_created_at) return false;
+            const dealDate = new Date(deal.deal_created_at);
+            return dealDate.getMonth() === 5 && dealDate.getFullYear() === 2025;
+          });
+          
+          if (allJuneDeals.length > 0) {
+            return `📊 **Vendas em junho de 2025:**\n\n💰 **Valor total vendido:** R$ 0,00\n📈 **Total de oportunidades:** ${allJuneDeals.length}\n⚠️ **Nenhum deal fechado neste período**`;
+          }
+          return `Não foram encontradas vendas em junho de 2025. Há ${data.length} deals no total no sistema.`;
+        }
+        
+        return `📊 **Vendas em junho de 2025:**\n\n💰 **Valor total vendido:** R$ ${monthValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n✅ **Deals fechados:** ${filteredDeals.length}\n📈 **Total de oportunidades:** ${data.filter(d => {
+          const date = new Date(d.deal_created_at);
+          return date.getMonth() === 5 && date.getFullYear() === 2025;
+        }).length}`;
       }
       
       return `📊 **Vendas totais:**\n\n💰 **Valor total vendido:** R$ ${totalValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n✅ **Deals fechados:** ${closedDeals.length}`;

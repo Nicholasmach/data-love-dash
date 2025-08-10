@@ -384,9 +384,17 @@ class NalkAIProcessor:
     def _generate_sales_response(self, result: Dict[str, Any], period_text: str) -> str:
         """Gera resposta para análise de vendas"""
         
-        if result['total_value'] == 0:
-            return f"Não foram encontradas vendas{period_text}. " + \
-                   f"Há {result['total_opportunities']} oportunidades no pipeline." if result['total_opportunities'] > 0 else ""
+        if result['closed_deals'] == 0:
+            if result['total_opportunities'] > 0:
+                return f"""📊 **Vendas{period_text}:**
+
+💰 **Valor total vendido:** R$ 0,00
+📈 **Total de oportunidades:** {result['total_opportunities']:,}
+⚠️ **Nenhum deal fechado neste período**
+
+💡 **Dica:** Existem {result['total_opportunities']} oportunidades em aberto que podem ser trabalhadas."""
+            else:
+                return f"Não foram encontradas vendas ou oportunidades{period_text}."
         
         return f"""📊 **Vendas{period_text}:**
 

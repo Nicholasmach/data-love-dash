@@ -2,8 +2,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
-import { Settings, CheckCircle, AlertCircle, RefreshCw } from "lucide-react"
-import { useState } from "react"
+import { Progress } from "@/components/ui/progress"
+import { Separator } from "@/components/ui/separator"
+import { Settings, CheckCircle, AlertCircle, RefreshCw, Zap, TrendingUp, Database, Shield } from "lucide-react"
+import { useState, useEffect } from "react"
 import { useToast } from "@/hooks/use-toast"
 import { RDStationConfigModal } from "@/components/RDStationConfigModal"
 import { supabase } from "@/integrations/supabase/client"
@@ -122,6 +124,18 @@ const Integrations = () => {
   )
   const [isRDConfigOpen, setIsRDConfigOpen] = useState(false)
   const [rdSyncStatus, setRDSyncStatus] = useState<'idle' | 'syncing' | 'completed' | 'error'>('idle')
+  const [syncProgress, setSyncProgress] = useState(0)
+  const [totalRecords, setTotalRecords] = useState(0)
+
+  // Polling para verificar status da sincronização
+  useEffect(() => {
+    if (rdSyncStatus === 'syncing') {
+      const interval = setInterval(() => {
+        checkSyncStatus()
+      }, 5000)
+      return () => clearInterval(interval)
+    }
+  }, [rdSyncStatus])
 
   const handleToggleIntegration = (integrationId: string, currentStatus: string) => {
     if (currentStatus === 'coming_soon') {
@@ -166,16 +180,12 @@ const Integrations = () => {
   const handleRDConfigSave = (config: any) => {
     console.log('RD Station config saved:', config)
     setRDSyncStatus('syncing')
+    setSyncProgress(0)
     
-    // Simula verificação do status após um tempo
+    // Inicia verificação do status imediatamente
     setTimeout(() => {
       checkSyncStatus()
-    }, 5000)
-    
-    toast({
-      title: "Sincronização iniciada",
-      description: "A coleta de deals foi iniciada em background",
-    })
+    }, 2000)
   }
 
   const checkSyncStatus = async () => {
@@ -196,16 +206,24 @@ const Integrations = () => {
 
       if (data?.status === 'completed') {
         setRDSyncStatus('completed')
+        setSyncProgress(100)
+        setTotalRecords(data.total_deals || 0)
         toast({
-          title: "Sincronização concluída",
+          title: "Sincronização concluída! 🎉",
           description: `${data.total_deals || 0} deals foram sincronizados com sucesso`,
         })
       } else if (data?.status === 'running') {
         setRDSyncStatus('syncing')
-        // Verifica novamente em 10 segundos
-        setTimeout(() => checkSyncStatus(), 10000)
+        // Simula progresso baseado no tempo decorrido
+        const elapsed = new Date().getTime() - new Date(data.created_at).getTime()
+        const estimatedProgress = Math.min(90, (elapsed / (5 * 60 * 1000)) * 100) // 5 min estimado
+        setSyncProgress(estimatedProgress)
+        
+        // Verifica novamente em 5 segundos
+        setTimeout(() => checkSyncStatus(), 5000)
       } else {
         setRDSyncStatus('error')
+        setSyncProgress(0)
       }
     } catch (error) {
       console.error('Erro ao verificar status:', error)
@@ -219,19 +237,24 @@ const Integrations = () => {
       switch (rdSyncStatus) {
         case 'syncing':
           return (
-            <Badge className="bg-blue-100 text-blue-800 border-blue-200 animate-pulse">
-              Sincronizando...
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge className="bg-primary/10 text-primary border-primary/30 animate-pulse">
+                <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                Sincronizando {Math.round(syncProgress)}%
+              </Badge>
+            </div>
           )
         case 'completed':
           return (
-            <Badge className="bg-green-100 text-green-800 border-green-200">
-              Sincronizado
+            <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">
+              <CheckCircle className="w-3 h-3 mr-1" />
+              {totalRecords} deals sincronizados
             </Badge>
           )
         case 'error':
           return (
-            <Badge className="bg-red-100 text-red-800 border-red-200">
+            <Badge className="bg-red-50 text-red-700 border-red-200">
+              <AlertCircle className="w-3 h-3 mr-1" />
               Erro na sincronização
             </Badge>
           )
@@ -258,22 +281,28 @@ const Integrations = () => {
     const isRDStation = integration.id === 'rd-station'
     
     return (
-      <Card key={integration.id} className="compact-card group interactive-hover">
-        <CardHeader className="pb-3">
-          <div className="perfect-align">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-white border border-border/20 flex items-center justify-center p-1">
-                {integration.logo}
+      <Card key={integration.id} className="group border border-border/50 rounded-xl bg-card hover:border-primary/30 hover:shadow-lg transition-all duration-300 overflow-hidden">
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-4">
+              <div className="relative">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 flex items-center justify-center p-2 group-hover:scale-105 transition-transform duration-200">
+                  {integration.logo}
+                </div>
+                {isConnected && (
+                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-background"></div>
+                )}
               </div>
+              
               <div className="flex-1">
-                <CardTitle className="metric-title text-base group-hover:text-primary transition-colors">
+                <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors mb-1">
                   {integration.name}
-                  {isRDStation && rdSyncStatus === 'syncing' && (
-                    <RefreshCw className="w-4 h-4 ml-2 animate-spin text-primary inline" />
-                  )}
-                </CardTitle>
-                <div className="flex items-center gap-2 mt-1">
+                </h3>
+                <div className="flex items-center gap-2">
                   {getStatusBadge(integration.status)}
+                  <span className="text-xs text-muted-foreground px-2 py-1 bg-secondary/50 rounded-md">
+                    {integration.category}
+                  </span>
                 </div>
               </div>
             </div>
@@ -282,135 +311,185 @@ const Integrations = () => {
               checked={isConnected}
               onCheckedChange={() => handleToggleIntegration(integration.id, integration.status)}
               disabled={integration.status === 'coming_soon' || (isRDStation && rdSyncStatus === 'syncing')}
+              className="data-[state=checked]:bg-primary"
             />
           </div>
-        </CardHeader>
 
-        <CardContent className="pt-0">
-          <CardDescription className="helper-text text-sm mb-3 leading-relaxed">
+          <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
             {integration.description}
-          </CardDescription>
+          </p>
+
+          {/* Progress bar para RD Station durante sync */}
+          {isRDStation && rdSyncStatus === 'syncing' && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-primary">Processando dados</span>
+                <span className="text-xs text-muted-foreground">{Math.round(syncProgress)}%</span>
+              </div>
+              <Progress value={syncProgress} className="h-2" />
+            </div>
+          )}
 
           {isConnected && integration.status !== 'coming_soon' && (
             <Button 
               variant="outline" 
               size="sm" 
-              className="w-full neon-button"
+              className="w-full group-hover:border-primary/50 group-hover:text-primary transition-colors"
               onClick={() => handleConfigureIntegration(integration.id)}
               disabled={isRDStation && rdSyncStatus === 'syncing'}
             >
               <Settings className="w-4 h-4 mr-2" />
-              {isRDStation && rdSyncStatus === 'syncing' ? 'Sincronizando...' : 'Configurar'}
+              {isRDStation && rdSyncStatus === 'syncing' ? 'Processando...' : 'Configurar'}
             </Button>
           )}
-        </CardContent>
+        </div>
       </Card>
     )
   }
 
   return (
-    <div className="space-y-6">
-      {/* IMPROVED Header */}
-      <div className="space-y-4">
-        <div>
-          <h1 className="metric-title text-3xl">Integrações</h1>
-          <p className="helper-text text-base mt-2">
-            Conecte suas ferramentas e centralize todos os dados em um só lugar
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-primary/5">
+      <div className="container mx-auto px-4 py-8 space-y-8">
+        {/* Hero Header */}
+        <div className="text-center space-y-4 mb-12">
+          <div className="flex items-center justify-center gap-3 mb-4">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center">
+              <Zap className="w-6 h-6 text-primary-foreground" />
+            </div>
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
+              Integrações
+            </h1>
+          </div>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            Conecte suas ferramentas favoritas e centralize todos os dados em um só lugar. 
+            Configure em minutos e comece a ter insights poderosos.
           </p>
         </div>
 
-        {/* IMPROVED Estatísticas */}
-        <Card className="compact-card bg-gradient-to-r from-primary/10 to-primary/5 border-primary/30">
-          <div className="compact-grid grid-cols-1 md:grid-cols-3">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30">
-                <CheckCircle className="h-5 w-5 text-primary" />
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <Card className="border-0 bg-gradient-to-br from-primary/10 to-primary/5 hover:from-primary/15 hover:to-primary/10 transition-all duration-300">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="w-12 h-12 rounded-xl bg-primary/20 flex items-center justify-center">
+                  <CheckCircle className="w-6 h-6 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Ativas</p>
+                  <p className="text-2xl font-bold text-foreground">{connectedIntegrations.size}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 hover:from-emerald-500/15 hover:to-emerald-500/10 transition-all duration-300">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center">
+                  <TrendingUp className="w-6 h-6 text-emerald-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Disponíveis</p>
+                  <p className="text-2xl font-bold text-foreground">{integrations.filter(i => i.status === 'available').length}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 bg-gradient-to-br from-blue-500/10 to-blue-500/5 hover:from-blue-500/15 hover:to-blue-500/10 transition-all duration-300">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                  <Database className="w-6 h-6 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Dados Sync</p>
+                  <p className="text-2xl font-bold text-foreground">{totalRecords > 0 ? `${(totalRecords / 1000).toFixed(1)}k` : '0'}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 bg-gradient-to-br from-orange-500/10 to-orange-500/5 hover:from-orange-500/15 hover:to-orange-500/10 transition-all duration-300">
+            <CardContent className="p-6">
+              <div className="flex items-center space-x-4">
+                <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                  <Shield className="w-6 h-6 text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Segurança</p>
+                  <p className="text-xl font-bold text-foreground">100%</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Integrações Conectadas */}
+        {connectedList.length > 0 && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
               </div>
               <div>
-                <p className="helper-text text-xs font-medium">Integrações Ativas</p>
-                <p className="metric-value text-xl">{connectedIntegrations.size}</p>
+                <h2 className="text-2xl font-semibold text-foreground">Integrações Conectadas</h2>
+                <p className="text-sm text-muted-foreground">Suas ferramentas ativas e sincronizadas</p>
               </div>
             </div>
-
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30">
-                <Settings className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <p className="helper-text text-xs font-medium">Disponíveis</p>
-                <p className="metric-value text-xl">{integrations.filter(i => i.status === 'available').length}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center border border-primary/30">
-                <AlertCircle className="h-5 w-5 text-primary" />
-              </div>
-              <div>
-                <p className="helper-text text-xs font-medium">Em Breve</p>
-                <p className="metric-value text-xl">{integrations.filter(i => i.status === 'coming_soon').length}</p>
-              </div>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Integrações Conectadas */}
-      {connectedList.length > 0 && (
-        <Card className="border-border/50">
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-500" />
-              Integrações Conectadas
-            </CardTitle>
-            <CardDescription>
-              Suas integrações ativas e funcionando
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {connectedList.map(renderIntegrationCard)}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {/* Integrações Disponíveis */}
-      {availableList.length > 0 && (
-        <Card className="border-border/50">
-          <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
-              <Settings className="h-5 w-5 text-muted-foreground" />
-              Integrações Disponíveis
-            </CardTitle>
-            <CardDescription>
-              Conecte novas ferramentas ao seu workspace
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Separator */}
+        {connectedList.length > 0 && availableList.length > 0 && (
+          <Separator className="my-12" />
+        )}
+
+        {/* Integrações Disponíveis */}
+        {availableList.length > 0 && (
+          <div className="space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                <Settings className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-semibold text-foreground">Explore Mais Integrações</h2>
+                <p className="text-sm text-muted-foreground">Conecte novas ferramentas e expanda suas possibilidades</p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
               {availableList.map(renderIntegrationCard)}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      {integrations.length === 0 && (
-        <Card className="border-border/50">
-          <CardContent className="text-center py-12">
-            <p className="text-muted-foreground">
-              Nenhuma integração encontrada para esta categoria.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+        {/* Empty State */}
+        {integrations.length === 0 && (
+          <Card className="border-dashed border-2 border-border/50 bg-transparent">
+            <CardContent className="text-center py-16">
+              <div className="w-16 h-16 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-4">
+                <Settings className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold text-foreground mb-2">Nenhuma integração encontrada</h3>
+              <p className="text-muted-foreground max-w-md mx-auto">
+                Novas integrações estão sendo adicionadas regularmente. Fique atento!
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
-      {/* RD Station Configuration Modal */}
-      <RDStationConfigModal
-        isOpen={isRDConfigOpen}
-        onClose={() => setIsRDConfigOpen(false)}
-        onSave={handleRDConfigSave}
-      />
+        {/* RD Station Configuration Modal */}
+        <RDStationConfigModal
+          isOpen={isRDConfigOpen}
+          onClose={() => setIsRDConfigOpen(false)}
+          onSave={handleRDConfigSave}
+        />
+      </div>
     </div>
   )
 }

@@ -28,11 +28,35 @@ export const RDStationConfigModal = ({ isOpen, onClose, onSave }: RDStationConfi
   const { toast } = useToast()
   const [config, setConfig] = useState<RDStationConfig>({
     apiKey: '',
-    startDate: '2025-01-01',
-    incrementalSync: false, // Desabilitado para garantir full refresh
+    startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 1 ano atrás
+    incrementalSync: false,
     autoSync: false
   })
   const [isSyncing, setIsSyncing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number } | null>(null)
+
+  const validateDateRange = (startDate: string): { isValid: boolean; message?: string } => {
+    const start = new Date(startDate)
+    const now = new Date()
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+    const diffInDays = Math.ceil((now.getTime() - start.getTime()) / (1000 * 3600 * 24))
+    
+    if (diffInDays > 365) {
+      return { 
+        isValid: false, 
+        message: "Por segurança e performance, o período máximo é de 1 ano. Ajuste a data de início." 
+      }
+    }
+    
+    if (start > now) {
+      return { 
+        isValid: false, 
+        message: "A data de início não pode ser futura." 
+      }
+    }
+    
+    return { isValid: true }
+  }
 
   const handleSync = async () => {
     if (!config.apiKey || !config.startDate) {
@@ -44,31 +68,46 @@ export const RDStationConfigModal = ({ isOpen, onClose, onSave }: RDStationConfi
       return
     }
 
+    // Validar período de data
+    const validation = validateDateRange(config.startDate)
+    if (!validation.isValid) {
+      toast({
+        title: "Período inválido",
+        description: validation.message,
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsSyncing(true)
+    setSyncProgress({ current: 0, total: 100 })
     
     try {
-      // Força full refresh quando data específica é definida
-      const finalConfig = {
-        ...config,
-        incrementalSync: false // Sempre false para garantir full refresh com data específica
-      }
-
-      // Inicia sincronização em background
+      // Inicia sincronização em background com abordagem otimizada
       const { error } = await supabase.functions.invoke('rd-station-sync', {
-        body: finalConfig
+        body: {
+          apiKey: config.apiKey,
+          startDate: config.startDate,
+          incrementalSync: false,
+          batchSize: 200, // Tamanho do batch para evitar timeouts
+          useStreaming: true // Processamento em streaming
+        }
       })
 
       if (error) {
         throw new Error(error.message)
       }
 
-      // Salva configuração e inicia feedback visual
-      onSave(finalConfig)
+      // Salva configuração e fecha modal imediatamente
+      onSave(config)
       toast({
-        title: "Sincronização iniciada",
-        description: "A sincronização dos deals foi iniciada em background",
+        title: "Sincronização iniciada ✨",
+        description: "Os dados estão sendo processados em background. Você será notificado quando concluir.",
       })
+      
+      // Fecha o modal imediatamente para melhor UX
       onClose()
+      
     } catch (error: any) {
       toast({
         title: "Erro na sincronização",
@@ -77,6 +116,7 @@ export const RDStationConfigModal = ({ isOpen, onClose, onSave }: RDStationConfi
       })
     } finally {
       setIsSyncing(false)
+      setSyncProgress(null)
     }
   }
 
@@ -104,7 +144,7 @@ export const RDStationConfigModal = ({ isOpen, onClose, onSave }: RDStationConfi
                 Configuração da API
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="apiKey" className="metric-title text-sm">Token da API *</Label>
                 <Input
@@ -114,6 +154,7 @@ export const RDStationConfigModal = ({ isOpen, onClose, onSave }: RDStationConfi
                   onChange={(e) => setConfig(prev => ({ ...prev, apiKey: e.target.value }))}
                   placeholder="Seu token de API do RD Station CRM"
                   className="bg-input border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all duration-200"
+                  disabled={isSyncing}
                 />
                 <p className="helper-text text-xs">
                   Obtenha seu token no painel administrativo do RD Station CRM
@@ -127,12 +168,41 @@ export const RDStationConfigModal = ({ isOpen, onClose, onSave }: RDStationConfi
                   type="date"
                   value={config.startDate}
                   onChange={(e) => setConfig(prev => ({ ...prev, startDate: e.target.value }))}
+                  max={new Date().toISOString().split('T')[0]}
+                  min={new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
                   className="bg-input border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all duration-200"
+                  disabled={isSyncing}
                 />
                 <p className="helper-text text-xs">
-                  Data a partir da qual os deals serão sincronizados
+                  Período máximo: 1 ano | Data selecionada: {config.startDate ? new Date(config.startDate).toLocaleDateString('pt-BR') : 'Nenhuma'}
                 </p>
+                {config.startDate && (
+                  <div className="bg-primary/10 border border-primary/20 rounded-lg p-3">
+                    <p className="helper-text text-xs text-primary font-medium">
+                      📊 Período selecionado: {Math.ceil((new Date().getTime() - new Date(config.startDate).getTime()) / (1000 * 3600 * 24))} dias
+                    </p>
+                  </div>
+                )}
               </div>
+
+              {/* Progress indicator durante sync */}
+              {isSyncing && syncProgress && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin text-primary" />
+                    <span className="helper-text text-sm">Processando dados...</span>
+                  </div>
+                  <div className="w-full bg-secondary rounded-full h-2">
+                    <div 
+                      className="bg-primary h-2 rounded-full transition-all duration-300"
+                      style={{ width: '20%' }}
+                    />
+                  </div>
+                  <p className="helper-text text-xs text-center">
+                    O processo pode levar alguns minutos. Você pode fechar este modal.
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

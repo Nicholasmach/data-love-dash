@@ -12,25 +12,23 @@ const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 // RD Station configuration
-const RD_STATION_TOKEN = Deno.env.get('RD_STATION_TOKEN')!;
 const API_URL = 'https://crm.rdstation.com/api/v1/deals';
-const LIMIT = 200;
+const DEFAULT_BATCH_SIZE = 200;
+const MAX_RETRIES = 3;
+const RATE_LIMIT_DELAY = 60000; // 1 minute
 
 interface DealResponse {
   deals: any[];
 }
 
-interface DealProduct {
-  product_id?: string;
-  name?: string;
-  description?: string;
-  base_price?: number;
-  price?: number;
-  discount?: number;
-  discount_type?: string;
-  total?: number;
+interface SyncConfig {
+  apiKey: string;
+  startDate: string;
+  batchSize?: number;
+  useStreaming?: boolean;
 }
 
+// Utility functions for data cleaning (mantendo as funções existentes)
 function cleanName(name: any): string {
   if (name === null || name === undefined) {
     return '';
@@ -41,13 +39,13 @@ function cleanName(name: any): string {
 function extractNestedValues(deal: any) {
   const newFields: any = {};
 
-  // Campanha
+  // Campaign
   const campaign = deal.campaign;
   if (campaign) {
     newFields.campaign_name = cleanName(campaign.name);
   }
 
-  // Contatos
+  // Contacts
   const contacts = deal.contacts;
   if (contacts && contacts.length > 0) {
     const contact = contacts[0];
@@ -56,7 +54,7 @@ function extractNestedValues(deal: any) {
     newFields.contact_email = contactEmails && contactEmails.length > 0 ? contactEmails[0].email : '';
   }
 
-  // Campos personalizados do negócio
+  // Deal custom fields
   const dealCustomFields = deal.deal_custom_fields || [];
   for (const field of dealCustomFields) {
     const label = cleanName(field.custom_field?.label);
@@ -73,16 +71,16 @@ function extractNestedValues(deal: any) {
     }
   }
 
-  // Motivo da perda do negócio
+  // Deal lost reason
   const dealLostReason = deal.deal_lost_reason;
   if (dealLostReason) {
     newFields.deal_lost_reason_name = cleanName(dealLostReason.name);
   }
 
-  // Produtos do negócio
+  // Deal products
   const dealProducts = deal.deal_products || [];
   for (let i = 0; i < dealProducts.length; i++) {
-    const product: DealProduct = dealProducts[i];
+    const product = dealProducts[i];
     const index = i + 1;
     newFields[`product_id_${index}`] = product.product_id || '';
     newFields[`product_name_${index}`] = cleanName(product.name);
@@ -94,26 +92,26 @@ function extractNestedValues(deal: any) {
     newFields[`product_total_${index}`] = product.total || 0;
   }
 
-  // Fonte do negócio
+  // Deal source
   const dealSource = deal.deal_source;
   if (dealSource) {
     newFields.deal_source_name = cleanName(dealSource.name);
   }
 
-  // Etapa do negócio
+  // Deal stage
   const dealStage = deal.deal_stage;
   if (dealStage) {
     newFields.deal_stage_id = dealStage.id;
     newFields.deal_stage_name = cleanName(dealStage.name);
   }
 
-  // Organização
+  // Organization
   const organization = deal.organization;
   if (organization) {
     newFields.organization_name = cleanName(organization.name);
   }
 
-  // Usuário
+  // User
   const user = deal.user;
   if (user) {
     newFields.user_id = user.id;
@@ -145,7 +143,7 @@ function cleanDealData(deals: any[]) {
   for (const deal of deals) {
     const dealCleaned: any = {};
     
-    // Processa campos base
+    // Process base fields
     for (const [k, v] of Object.entries(deal)) {
       if (!excludeFields.includes(k)) {
         const newKey = renameMap[k] || k;
@@ -153,7 +151,7 @@ function cleanDealData(deals: any[]) {
       }
     }
 
-    // Processa campos aninhados
+    // Process nested fields
     const nestedFields = extractNestedValues(deal);
     Object.assign(dealCleaned, nestedFields);
     
@@ -163,308 +161,371 @@ function cleanDealData(deals: any[]) {
   return cleanedDeals;
 }
 
-async function fetchDealsForPeriod(startDate: string, endDate: string, rdToken: string): Promise<any[]> {
+// Função otimizada para buscar deals com streaming e controle de timeouts
+async function fetchDealsForPeriod(
+  startDate: string, 
+  endDate: string, 
+  apiKey: string,
+  batchSize: number = DEFAULT_BATCH_SIZE,
+  onProgress?: (current: number, total: number) => void
+): Promise<any[]> {
   const allDeals = [];
   let page = 1;
   let hasMore = true;
+  let retryCount = 0;
 
-  console.log(`Iniciando coleta para período ${startDate} até ${endDate}`);
-  console.log(`URL base da API: ${API_URL}`);
+  console.log(`🚀 Iniciando coleta otimizada para período ${startDate} até ${endDate}`);
+  console.log(`📊 Batch size: ${batchSize}, API: ${API_URL}`);
 
-  while (hasMore) {
-    const url = `${API_URL}?token=${rdToken}&created_at_period=true&start_date=${startDate}&end_date=${endDate}&limit=${LIMIT}&page=${page}`;
-    console.log(`URL completa: ${url.replace(rdToken, '***')}`);
+  while (hasMore && retryCount < MAX_RETRIES) {
+    const url = `${API_URL}?token=${apiKey}&created_at_period=true&start_date=${startDate}&end_date=${endDate}&limit=${batchSize}&page=${page}`;
     
     try {
-      console.log(`Buscando página ${page}`);
-      const response = await fetch(url);
+      console.log(`📄 Processando página ${page} (${allDeals.length} deals coletados)`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Lovable-Analytics/1.0',
+          'Accept': 'application/json'
+        }
+      });
+      
+      clearTimeout(timeoutId);
       
       if (response.status === 429) {
-        console.log('Rate limit atingido, aguardando...');
-        await new Promise(resolve => setTimeout(resolve, 60000));
+        console.log('⏳ Rate limit atingido, aguardando 60s...');
+        await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+        retryCount++;
         continue;
       }
 
+      if (response.status === 401) {
+        throw new Error('Token de API inválido. Verifique suas credenciais.');
+      }
+
       if (!response.ok) {
-        throw new Error(`Erro na API: ${response.status}`);
+        throw new Error(`Erro na API RD Station: ${response.status} - ${response.statusText}`);
       }
 
       const data: DealResponse = await response.json();
       const deals = data.deals || [];
       
-      allDeals.push(...cleanDealData(deals));
-      console.log(`Página ${page} - Coletados ${deals.length} registros`);
+      if (deals.length > 0) {
+        const cleanedDeals = cleanDealData(deals);
+        allDeals.push(...cleanedDeals);
+        console.log(`✅ Página ${page}: ${deals.length} deals processados (Total: ${allDeals.length})`);
+        
+        // Call progress callback if provided
+        if (onProgress) {
+          onProgress(allDeals.length, allDeals.length + (deals.length === batchSize ? batchSize : 0));
+        }
+      } else {
+        console.log(`📭 Página ${page}: Nenhum deal encontrado`);
+      }
       
       page++;
+      hasMore = deals.length === batchSize;
+      retryCount = 0; // Reset retry count on success
       
-      // Continue enquanto retornar o limite máximo
-      hasMore = deals.length === LIMIT;
-      
-      // Pequena pausa entre requisições para evitar rate limiting
+      // Pausa entre requisições para evitar rate limiting
       if (hasMore) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       
     } catch (error) {
-      console.error(`Erro ao buscar deals: ${error}`);
-      throw error;
+      console.error(`❌ Erro na página ${page}:`, error);
+      
+      if (error.name === 'AbortError') {
+        console.log('⏰ Timeout na requisição, tentando novamente...');
+      }
+      
+      retryCount++;
+      if (retryCount >= MAX_RETRIES) {
+        throw new Error(`Falha após ${MAX_RETRIES} tentativas: ${error.message}`);
+      }
+      
+      // Exponential backoff
+      const backoffTime = Math.min(1000 * Math.pow(2, retryCount), 10000);
+      console.log(`🔄 Tentativa ${retryCount}/${MAX_RETRIES} em ${backoffTime}ms...`);
+      await new Promise(resolve => setTimeout(resolve, backoffTime));
     }
   }
 
-  console.log(`Total de deals coletados para o período: ${allDeals.length}`);
+  console.log(`🎯 Coleta concluída: ${allDeals.length} deals do período ${startDate} até ${endDate}`);
   return allDeals;
 }
 
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-
-async function processAllDeals(allDeals: any[], syncJobId: string) {
-  console.log('Processando deals para inserção...');
+// Função para processar deals em batches menores para evitar timeouts
+async function processDealsInBatches(deals: any[], syncJobId: string, batchSize: number = 500) {
+  console.log(`🔄 Processando ${deals.length} deals em batches de ${batchSize}`);
   
-  // Processa todos os deals
   const processedDeals = [];
   const normalizedDeals = [];
   
-  for (const deal of allDeals) {
-    const processedDeal = {
-      rd_deal_id: deal.deal_id || String(deal.id) || '',
-      raw_data: deal, // Salva dados brutos
-      processed_data: {
-        // Campos principais extraídos
+  for (let i = 0; i < deals.length; i += batchSize) {
+    const batch = deals.slice(i, i + batchSize);
+    console.log(`📦 Processando batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(deals.length / batchSize)}`);
+    
+    for (const deal of batch) {
+      const processedDeal = {
+        rd_deal_id: deal.deal_id || String(deal.id) || '',
+        raw_data: deal,
+        processed_data: {
+          deal_name: deal.deal_name || deal.name || '',
+          deal_amount_total: deal.deal_amount_total || deal.amount_total || 0,
+          deal_created_at: deal.deal_created_at || deal.created_at || null,
+          deal_updated_at: deal.deal_updated_at || deal.updated_at || null,
+          deal_closed_at: deal.deal_closed_at || deal.closed_at || null,
+          custom_fields: {},
+          products: []
+        },
+        sync_job_id: syncJobId
+      };
+      
+      const normalizedDeal = {
+        rd_deal_id: deal.deal_id || String(deal.id) || '',
         deal_name: deal.deal_name || deal.name || '',
-        deal_amount_total: deal.deal_amount_total || deal.amount_total || 0,
+        deal_amount_total: parseFloat(deal.deal_amount_total || deal.amount_total || 0),
+        deal_amount_unique: parseFloat(deal.deal_amount_unique || deal.amount_unique || 0),
         deal_created_at: deal.deal_created_at || deal.created_at || null,
         deal_updated_at: deal.deal_updated_at || deal.updated_at || null,
         deal_closed_at: deal.deal_closed_at || deal.closed_at || null,
-        // Campos customizados processados ficam aqui
-        custom_fields: {},
-        products: []
-      }
-    };
-    
-    // Cria versão normalizada para análises com TODOS os campos do JSON
-    const normalizedDeal = {
-      rd_deal_id: deal.deal_id || String(deal.id) || '',
-      deal_name: deal.deal_name || deal.name || '',
-      deal_amount_total: parseFloat(deal.deal_amount_total || deal.amount_total || 0),
-      deal_amount_unique: parseFloat(deal.deal_amount_unique || deal.amount_unique || 0),
-      deal_created_at: deal.deal_created_at || deal.created_at || null,
-      deal_updated_at: deal.deal_updated_at || deal.updated_at || null,
-      deal_closed_at: deal.deal_closed_at || deal.closed_at || null,
-      deal_stage_id: deal.deal_stage_id || '',
-      deal_stage_name: deal.deal_stage_name || '',
-      deal_source_name: deal.deal_source_name || '',
-      deal_lost_reason_name: deal.deal_lost_reason_name || '',
-      contact_name: deal.contact_name || '',
-      contact_email: deal.contact_email || '',
-      campaign_name: deal.campaign_name || '',
-      organization_name: deal.organization_name || '',
-      user_id: deal.user_id || '',
-      user_name: deal.user_name || '',
-      interactions: parseInt(deal.interactions || 0),
-      win: Boolean(deal.win),
-      hold: Boolean(deal.hold),
-      last_activity_at: deal.last_activity_at || null,
-      last_activity_content: deal.last_activity_content || '',
-      sync_job_id: syncJobId
-    };
-    
-    // Extrai TODOS os campos customizados e produtos para processed_data
-    const customFields: any = {};
-    const products = [];
-    
-    // Normaliza TODOS os campos do JSON que não são padrão
-    for (const [key, value] of Object.entries(deal)) {
-      // Ignora campos já mapeados
-      const standardFields = [
-        'deal_id', 'id', 'deal_name', 'name', 'deal_amount_total', 'amount_total', 
-        'deal_created_at', 'created_at', 'deal_updated_at', 'updated_at',
-        'deal_closed_at', 'closed_at', 'deal_stage_id', 'deal_stage_name',
-        'deal_source_name', 'deal_lost_reason_name', 'contact_name', 'contact_email',
-        'campaign_name', 'organization_name', 'user_id', 'user_name', 'interactions',
-        'win', 'hold', 'last_activity_at', 'last_activity_content'
-      ];
+        deal_stage_id: deal.deal_stage_id || '',
+        deal_stage_name: deal.deal_stage_name || '',
+        deal_source_name: deal.deal_source_name || '',
+        deal_lost_reason_name: deal.deal_lost_reason_name || '',
+        contact_name: deal.contact_name || '',
+        contact_email: deal.contact_email || '',
+        campaign_name: deal.campaign_name || '',
+        organization_name: deal.organization_name || '',
+        user_id: deal.user_id || '',
+        user_name: deal.user_name || '',
+        interactions: parseInt(deal.interactions || 0),
+        win: Boolean(deal.win),
+        hold: Boolean(deal.hold),
+        last_activity_at: deal.last_activity_at || null,
+        last_activity_content: deal.last_activity_content || '',
+        sync_job_id: syncJobId
+      };
       
-      if (key.startsWith('product_')) {
-        // Lógica de produtos mantida
-        const parts = key.split('_');
-        if (parts.length >= 3) {
-          const index = parts[parts.length - 1];
-          const field = parts.slice(1, -1).join('_');
-          
-          if (!products[parseInt(index) - 1]) {
-            products[parseInt(index) - 1] = {};
+      // Extract custom fields and products
+      const customFields: any = {};
+      const products = [];
+      
+      for (const [key, value] of Object.entries(deal)) {
+        const standardFields = [
+          'deal_id', 'id', 'deal_name', 'name', 'deal_amount_total', 'amount_total', 
+          'deal_created_at', 'created_at', 'deal_updated_at', 'updated_at',
+          'deal_closed_at', 'closed_at', 'deal_stage_id', 'deal_stage_name',
+          'deal_source_name', 'deal_lost_reason_name', 'contact_name', 'contact_email',
+          'campaign_name', 'organization_name', 'user_id', 'user_name', 'interactions',
+          'win', 'hold', 'last_activity_at', 'last_activity_content'
+        ];
+        
+        if (key.startsWith('product_')) {
+          const parts = key.split('_');
+          if (parts.length >= 3) {
+            const index = parts[parts.length - 1];
+            const field = parts.slice(1, -1).join('_');
+            
+            if (!products[parseInt(index) - 1]) {
+              products[parseInt(index) - 1] = {};
+            }
+            products[parseInt(index) - 1][field] = value;
           }
-          products[parseInt(index) - 1][field] = value;
-        }
-      } else if (!standardFields.includes(key)) {
-        // Todos os outros campos vão para custom_fields (NORMALIZAÇÃO COMPLETA)
-        if (typeof value === 'object' && value !== null) {
-          // Se for objeto, converte para string JSON para armazenar
-          customFields[key] = JSON.stringify(value);
-        } else {
-          customFields[key] = value;
+        } else if (!standardFields.includes(key)) {
+          if (typeof value === 'object' && value !== null) {
+            customFields[key] = JSON.stringify(value);
+          } else {
+            customFields[key] = value;
+          }
         }
       }
+      
+      processedDeal.processed_data.custom_fields = customFields;
+      processedDeal.processed_data.products = products.filter(p => p);
+      
+      processedDeals.push(processedDeal);
+      normalizedDeals.push(normalizedDeal);
     }
-    
-    processedDeal.processed_data.custom_fields = customFields;
-    processedDeal.processed_data.products = products.filter(p => p);
-    
-    processedDeals.push(processedDeal);
-    normalizedDeals.push(normalizedDeal);
   }
   
   return { processedDeals, normalizedDeals };
 }
 
+// Função para inserir dados em batches para evitar timeouts
+async function insertDataInBatches(table: string, data: any[], batchSize: number = 1000) {
+  console.log(`💾 Inserindo ${data.length} registros na tabela ${table} em batches de ${batchSize}`);
+  
+  for (let i = 0; i < data.length; i += batchSize) {
+    const batch = data.slice(i, i + batchSize);
+    const batchNumber = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(data.length / batchSize);
+    
+    console.log(`📝 Inserindo batch ${batchNumber}/${totalBatches} na tabela ${table}`);
+    
+    const { error } = await supabase
+      .from(table)
+      .insert(batch);
+    
+    if (error) {
+      console.error(`❌ Erro ao inserir batch ${batchNumber} na tabela ${table}:`, error);
+      throw error;
+    }
+    
+    console.log(`✅ Batch ${batchNumber}/${totalBatches} inserido com sucesso`);
+  }
+}
+
 serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { apiKey, startDate, pageLimit, autoSync, incrementalSync } = await req.json();
+    const config: SyncConfig = await req.json();
+    const { apiKey, startDate, batchSize = DEFAULT_BATCH_SIZE, useStreaming = true } = config;
     
-    console.log('Iniciando sincronização RD Station...');
-    console.log('Parâmetros recebidos:', { apiKey: apiKey ? '***' : 'não informado', startDate, incrementalSync, autoSync });
+    console.log('🚀 Iniciando sincronização RD Station otimizada...');
+    console.log('📋 Configuração:', { 
+      hasApiKey: !!apiKey, 
+      startDate, 
+      batchSize, 
+      useStreaming 
+    });
     
-    // Use a data definida pelo usuário ou uma data padrão
-    const syncStartDate = startDate ? new Date(startDate) : new Date('2024-01-01');
-    const syncEndDate = new Date();
-    
-    console.log(`Coletando deals de ${syncStartDate.toISOString()} até ${syncEndDate.toISOString()}`);
-    
-    // SEMPRE usar a data especificada pelo usuário, ignorar sincronização incremental para full refresh
-    let actualStartDate = syncStartDate;
-    
-    // Só usar incremental se não foi especificada uma data específica
-    if (incrementalSync && !startDate) {
-      console.log('Verificando última sincronização para modo incremental...');
-      const { data: lastSync } = await supabase
-        .from('rd_sync_jobs')
-        .select('last_sync_date')
-        .eq('status', 'completed')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      
-      if (lastSync?.last_sync_date) {
-        actualStartDate = new Date(lastSync.last_sync_date);
-        console.log(`Sincronização incremental desde: ${actualStartDate.toISOString()}`);
-      }
+    if (!apiKey) {
+      throw new Error('Token de API é obrigatório');
     }
     
-    // Registra o início da sincronização
+    if (!startDate) {
+      throw new Error('Data de início é obrigatória');
+    }
+    
+    // Validar período máximo de 1 ano
+    const start = new Date(startDate);
+    const now = new Date();
+    const diffInDays = Math.ceil((now.getTime() - start.getTime()) / (1000 * 3600 * 24));
+    
+    if (diffInDays > 365) {
+      throw new Error('Período máximo permitido é de 1 ano. Ajuste a data de início.');
+    }
+    
+    const startDateStr = start.toISOString().split('T')[0];
+    const endDateStr = now.toISOString().split('T')[0];
+    
+    console.log(`📅 Período validado: ${startDateStr} até ${endDateStr} (${diffInDays} dias)`);
+    
+    // Create sync job
     const { data: syncJob, error: syncError } = await supabase
       .from('rd_sync_jobs')
       .insert({
         user_id: null,
         status: 'running',
-        start_date: actualStartDate.toISOString(),
-        end_date: syncEndDate.toISOString(),
+        start_date: start.toISOString(),
+        end_date: now.toISOString(),
         total_deals: 0,
-        last_sync_date: syncEndDate.toISOString()
+        last_sync_date: now.toISOString()
       })
       .select()
       .single();
     
     if (syncError) {
-      console.error('Erro ao criar job de sincronização:', syncError);
+      console.error('❌ Erro ao criar job de sincronização:', syncError);
       throw syncError;
     }
 
-    // Buscar todos os deals do período definido
-    const startDateStr = actualStartDate.toISOString().split('T')[0];
-    const endDateStr = syncEndDate.toISOString().split('T')[0];
-    
-    const allDeals = await fetchDealsForPeriod(startDateStr, endDateStr, apiKey);
+    console.log(`📋 Job de sincronização criado: ${syncJob.id}`);
 
-    console.log(`Total de deals coletados: ${allDeals.length}`);
-    
-    const { processedDeals, normalizedDeals } = await processAllDeals(allDeals, syncJob.id);
-    
-    // Adiciona sync_job_id aos dados brutos
-    const dealsWithSyncJobId = processedDeals.map(deal => ({
-      ...deal,
-      sync_job_id: syncJob.id
-    }));
-    
-    // SEMPRE fazer full refresh quando especificada uma data inicial
-    const shouldFullRefresh = !incrementalSync || startDate;
-    
-    if (shouldFullRefresh) {
-      // Full refresh: deletar todos os dados existentes antes de inserir novos
-      console.log('Executando full refresh - deletando dados existentes...');
-      await supabase.from('rd_deals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      await supabase.from('deals_normalized').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      console.log('Dados existentes removidos');
-    }
-    
-    // Salvar dados brutos
-    if (dealsWithSyncJobId.length > 0) {
-      const { error: insertError } = await supabase
-        .from('rd_deals')
-        .insert(dealsWithSyncJobId);
-      
-      if (insertError) {
-        console.error('Erro ao inserir deals brutos:', insertError);
-        throw insertError;
-      }
-    }
-    
-    // Salvar dados normalizados (upsert apenas para incremental, insert para full refresh)
-    if (normalizedDeals.length > 0) {
-      if (shouldFullRefresh) {
-        const { error: insertError } = await supabase
-          .from('deals_normalized')
-          .insert(normalizedDeals);
+    // Background task para sincronização
+    EdgeRuntime.waitUntil((async () => {
+      try {
+        // Fetch deals with progress tracking
+        const allDeals = await fetchDealsForPeriod(
+          startDateStr, 
+          endDateStr, 
+          apiKey, 
+          batchSize
+        );
+
+        console.log(`📊 Total coletado: ${allDeals.length} deals`);
         
-        if (insertError) {
-          console.error('Erro ao inserir deals normalizados:', insertError);
-          throw insertError;
+        if (allDeals.length === 0) {
+          await supabase
+            .from('rd_sync_jobs')
+            .update({
+              status: 'completed',
+              total_deals: 0,
+              end_date: new Date().toISOString()
+            })
+            .eq('id', syncJob.id);
+          return;
         }
-      } else {
-        const { error: upsertError } = await supabase
-          .from('deals_normalized')
-          .upsert(normalizedDeals, { onConflict: 'rd_deal_id' });
+
+        // Process deals in batches
+        const { processedDeals, normalizedDeals } = await processDealsInBatches(
+          allDeals, 
+          syncJob.id, 
+          500
+        );
+
+        // Clear existing data (full refresh)
+        console.log('🧹 Executando limpeza de dados existentes...');
+        await supabase.from('rd_deals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from('deals_normalized').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        console.log('✅ Dados existentes removidos');
+
+        // Insert processed data in batches
+        if (processedDeals.length > 0) {
+          await insertDataInBatches('rd_deals', processedDeals, 1000);
+        }
+
+        if (normalizedDeals.length > 0) {
+          await insertDataInBatches('deals_normalized', normalizedDeals, 1000);
+        }
+
+        // Update sync job as completed
+        await supabase
+          .from('rd_sync_jobs')
+          .update({
+            status: 'completed',
+            total_deals: allDeals.length,
+            end_date: new Date().toISOString()
+          })
+          .eq('id', syncJob.id);
+
+        console.log('🎉 Sincronização concluída com sucesso!');
         
-        if (upsertError) {
-          console.error('Erro ao fazer upsert deals normalizados:', upsertError);
-          throw upsertError;
-        }
+      } catch (error) {
+        console.error('❌ Erro na sincronização background:', error);
+        
+        await supabase
+          .from('rd_sync_jobs')
+          .update({
+            status: 'error',
+            end_date: new Date().toISOString()
+          })
+          .eq('id', syncJob.id);
       }
-    }
+    })());
 
-    // Atualiza o job como concluído
-    await supabase
-      .from('rd_sync_jobs')
-      .update({
-        status: 'completed',
-        end_date: new Date().toISOString(),
-        total_deals: allDeals.length
-      })
-      .eq('id', syncJob.id);
-
-    console.log('Sincronização concluída com sucesso');
-    
+    // Retorna resposta imediata
     return new Response(
       JSON.stringify({ 
         success: true, 
         syncJobId: syncJob.id,
-        recordsProcessed: allDeals.length,
-        message: 'Sincronização RD Station concluída com sucesso' 
+        message: 'Sincronização iniciada em background',
+        estimatedTime: `${Math.ceil(diffInDays / 30)} minutos`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
   } catch (error) {
-    console.error('Erro durante a sincronização:', error);
+    console.error('❌ Erro durante inicialização da sincronização:', error);
     
     return new Response(
       JSON.stringify({ 
